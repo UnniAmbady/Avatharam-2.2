@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-3.2
+# Ver-3.3
 # Avatharam-2.2 — UI Revamp (Streamlit app)
 # Cosmetic/layout update + sanity-wired to the previously working flow.
 # - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
@@ -348,38 +348,16 @@ with col2:
                 st.error("ChatGPT call failed. See Debug for details.")
                 debug(f"[openai error] {repr(e)}")
 
-# -------------- GPT Query input (F) — now directly under Test-1 --------------
-placeholder = f"{ss.Name}, You need to Press the 'Speak' button and post your Question and once you complet your sentence press [Stop]. This will help to edit the sentence before we send it to Chat GPT."
-placeholder = f"{ss.Name}, You need to Press the 'Speak' button and post your Question and once you complet your sentence press [Stop]. This will help to edit the sentence before we send it to Chat GPT."
-user_msg = st.chat_input(placeholder, key="gpt_query")
-
-# When user submits the chat_input, send to ChatGPT immediately (no ChatGPT button)
-if user_msg is not None:
-    ss.last_text = (user_msg or "").strip()
-    debug(f"[user] {ss.last_text}")
-    if ss.last_text:
-        OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
-        OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "gpt-5-nano",
-            "messages": [
-                {"role": "system", "content": "You are a clear, concise assistant."},
-                {"role": "user", "content": ss.last_text},
-            ],
-            "temperature": 0.6,
-            "max_tokens": 600,
-        }
-        try:
-            r = requests.post(OPENAI_CHAT_URL, headers=OPENAI_HEADERS, data=json.dumps(payload), timeout=60)
-            body = r.json()
-            reply = (body.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-            ss.last_reply = reply
-            debug(f"[openai] status {r.status_code}")
-            if reply and ss.session_id and ss.session_token:
-                send_text_to_avatar(ss.session_id, ss.session_token, reply)
-        except Exception as e:
-            st.error("ChatGPT call failed. See Debug for details.")
-            debug(f"[openai error] {repr(e)}")
+# -------------- Edit box (F) — under Test-1 (no chat_input) --------------
+# We use a normal text_area so mobile users can edit easily. ChatGPT1 sends this content.
+st.session_state.setdefault("gpt_query", st.session_state.get("gpt_query", ""))
+st.session_state["gpt_query"] = st.text_area(
+    "",
+    value=st.session_state.get("gpt_query", ""),
+    height=120,
+    label_visibility="collapsed",
+    key="txt_edit_gpt_query",
+)
 
 # -------------- LLM Reply (read-only) --------------
 if ss.get("last_reply"):
@@ -434,6 +412,7 @@ if ss.get("last_reply"):
 
 # -------------- Debug box --------------
 st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
+
 
 
 
