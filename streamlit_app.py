@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-4
+# Ver-4.1
 # Avatharam-2.2 — Ver-4 (refined)
 # - Fix DuplicateWidgetID by giving unique keys and rendering one copy of each widget
 # - Voice -> insert transcript into edit box, then st.rerun() for immediate UI update
@@ -251,33 +251,46 @@ except Exception:
     mic_recorder = None  # type: ignore
     _HAS_MIC = False
 
+# Flags to avoid rerun loops after capture
+ss.setdefault("voice_ready", False)            # mic produced audio this cycle
+ss.setdefault("voice_inserted_once", False)    # we already pushed transcript into edit box
+
 wav_bytes: Optional[bytes] = None
 if _HAS_MIC:
     audio = mic_recorder(
         start_prompt="Speak",
         stop_prompt="Stop",
-        just_once=False,
+        just_once=True,                 # prevent continuous byte streams after Stop
         use_container_width=False,
         key="mic_recorder_main",
         format="wav",
     )
-    if isinstance(audio, dict) and "bytes" in audio:
+    if isinstance(audio, dict) and "bytes" in audio and audio["bytes"]:
         wav_bytes = audio["bytes"]
+        ss.voice_ready = True
         debug(f"[mic] received {len(wav_bytes)} bytes")
-    elif isinstance(audio, (bytes, bytearray)):
+    elif isinstance(audio, (bytes, bytearray)) and audio:
         wav_bytes = bytes(audio)
+        ss.voice_ready = True
         debug(f"[mic] received {len(wav_bytes)} bytes (raw)")
     else:
         debug("[mic] waiting for recording…")
 else:
     st.warning("`streamlit-mic-recorder` is not installed.")
 
-if wav_bytes:
+if ss.voice_ready:
     st.audio(wav_bytes, format="audio/wav", autoplay=False)
-    transcript_text = ss.last_text or "(voice captured)"  # plug ASR when available
-    ss.gpt_query = transcript_text
-    debug(f"[voice→editbox] {len(transcript_text)} chars")
-    st.rerun()  # ensure the edit box below shows updated text immediately
+    if not ss.voice_inserted_once:
+        # Replace this with your ASR result when available
+        transcript_text = ss.last_text or "(voice captured)"
+        ss.gpt_query = transcript_text
+        ss.voice_inserted_once = True
+        debug(f"[voice→editbox] {len(transcript_text)} chars; rerun once to refresh UI")
+        st.rerun()  # one-time UI refresh so the edit box shows text immediately
+
+# Reset voice_ready flag after we've had a chance to render the audio bar once
+if ss.voice_ready and ss.voice_inserted_once:
+    ss.voice_ready = False
 
 # ---------------- Actions row (Test-1 + ChatGPT1) ----------------
 col1, col2 = st.columns(2, gap="small")
@@ -338,7 +351,6 @@ if ss.get("last_reply"):
 
 # ---------------- Debug (last) ----------------
 st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True, key="txt_debug_ro")
-
 
 
 
