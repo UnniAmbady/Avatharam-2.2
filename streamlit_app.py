@@ -327,7 +327,7 @@ with col2:
             OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
             OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "gpt-5-nano",
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": "You are a clear, concise assistant."},
                     {"role": "user", "content": ss.last_text or ""},
