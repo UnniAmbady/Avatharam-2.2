@@ -354,7 +354,6 @@ if ss.get("last_reply"):
     st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed")
 
 # -------------- Debug box --------------
-st.text_area("Debug", value="
-".join(ss.debug_buf), height=220, disabled=True)
+st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
 
 
