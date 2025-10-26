@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-3
+# Ver-3.1
 # Avatharam-2.2 — UI Revamp (Streamlit app)
 # Cosmetic/layout update + sanity-wired to the previously working flow.
 # - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
@@ -295,27 +295,63 @@ else:
     else:
         debug("[mic] waiting for recording…")
 
-# ---- Audio playback (B) + capture transcript stub
+# ---- Audio playback (B) + capture transcript into Edit Box
 if wav_bytes:
     st.audio(wav_bytes, format="audio/wav", autoplay=False)
-    # NOTE: Plug your Whisper/ASR here to get real transcript.
-    # For now, we retain previous behavior; set last_text if not already set by ASR.
-    if not ss.last_text:
-        ss.last_text = "(voice captured)"
-    # Prefill the chat_input by setting its session_state BEFORE we render it below
-    st.session_state.setdefault("gpt_query", ss.last_text)
-    st.session_state["gpt_query"] = ss.last_text
+    # Replace this with your real ASR result when available
+    transcript_text = ss.last_text or "(voice captured)"
+    # Clear the edit box and place the transcript
+    st.session_state["gpt_query"] = transcript_text
+    debug(f"[voice→editbox] {len(transcript_text)} chars")
 
-# ============ Actions row (Test-1 only) ============
-col1 = st.columns(2, gap="small")[0]
+# ============ Actions row (Test-1 + ChatGPT1) ============
+col1, col2 = st.columns(2, gap="small")
 with col1:
     if st.button("Test-1", use_container_width=True):
         if not (ss.session_id and ss.session_token and ss.offer_sdp):
             st.warning("Start a session first.")
         else:
             send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
+with col2:
+    # Old flow restored: send whatever is in the edit box to ChatGPT on button press
+    if st.button("ChatGPT1", use_container_width=True):
+        # Take current editable content from the box (gpt_query)
+        ss.last_text = (st.session_state.get("gpt_query", "") or "").strip()
+        debug(f"[user→gpt] {ss.last_text}")
+        if ss.last_text:
+            OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+            OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "gpt-5-nano",
+                "messages": [
+                    {"role": "system", "content": "You are a clear, concise assistant."},
+                    {"role": "user", "content": ss.last_text},
+                ],
+                "temperature": 0.6,
+                "max_tokens": 600,
+            }
+            try:
+                r = requests.post(OPENAI_CHAT_URL, headers=OPENAI_HEADERS, data=json.dumps(payload), timeout=60)
+                body = r.json()
+                reply = (body.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+                ss.last_reply = reply
+                debug(f"[openai] status {r.status_code}")
+                # Append assistant reply to the edit box (so user sees dialogue inline)
+                if reply:
+                    prev = st.session_state.get("gpt_query", "").rstrip()
+                    joiner = "
+
+" if prev else ""
+                    st.session_state["gpt_query"] = f"{prev}{joiner}Assistant: {reply}"
+                    # Optionally speak back via avatar if session is active
+                    if ss.session_id and ss.session_token:
+                        send_text_to_avatar(ss.session_id, ss.session_token, reply)
+            except Exception as e:
+                st.error("ChatGPT call failed. See Debug for details.")
+                debug(f"[openai error] {repr(e)}")
 
 # -------------- GPT Query input (F) — now directly under Test-1 --------------
+placeholder = f"{ss.Name}, You need to Press the 'Speak' button and post your Question and once you complet your sentence press [Stop]. This will help to edit the sentence before we send it to Chat GPT."
 placeholder = f"{ss.Name}, You need to Press the 'Speak' button and post your Question and once you complet your sentence press [Stop]. This will help to edit the sentence before we send it to Chat GPT."
 user_msg = st.chat_input(placeholder, key="gpt_query")
 
@@ -400,5 +436,6 @@ if ss.get("last_reply"):
 
 # -------------- Debug box --------------
 st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
+
 
 
