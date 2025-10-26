@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-2
+# Ver-3
 # Avatharam-2.2 — UI Revamp (Streamlit app)
 # Cosmetic/layout update + sanity-wired to the previously working flow.
 # - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
@@ -295,21 +295,67 @@ else:
     else:
         debug("[mic] waiting for recording…")
 
-# ---- Audio playback (ABOVE transcript), plus simple fallback transcript like original
+# ---- Audio playback (B) + capture transcript stub
 if wav_bytes:
     st.audio(wav_bytes, format="audio/wav", autoplay=False)
-    # Fallback stub text so pipeline still works without Whisper
-    ss.last_text = "Thanks! (audio captured)"
-    debug(f"[voice→text] {ss.last_text}")
+    # NOTE: Plug your Whisper/ASR here to get real transcript.
+    # For now, we retain previous behavior; set last_text if not already set by ASR.
+    if not ss.last_text:
+        ss.last_text = "(voice captured)"
+    # Prefill the chat_input by setting its session_state BEFORE we render it below
+    st.session_state.setdefault("gpt_query", ss.last_text)
+    st.session_state["gpt_query"] = ss.last_text
 
-# ---- Prompt input (chat_input, 2-line look)
+# ============ Actions row (Test-1 only) ============
+col1 = st.columns(2, gap="small")[0]
+with col1:
+    if st.button("Test-1", use_container_width=True):
+        if not (ss.session_id and ss.session_token and ss.offer_sdp):
+            st.warning("Start a session first.")
+        else:
+            send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
+
+# -------------- GPT Query input (F) — now directly under Test-1 --------------
 placeholder = f"{ss.Name}, You need to Press the 'Speak' button and post your Question and once you complet your sentence press [Stop]. This will help to edit the sentence before we send it to Chat GPT."
-user_msg = st.chat_input(placeholder)
-if user_msg:
+user_msg = st.chat_input(placeholder, key="gpt_query")
+
+# When user submits the chat_input, send to ChatGPT immediately (no ChatGPT button)
+if user_msg is not None:
     ss.last_text = (user_msg or "").strip()
     debug(f"[user] {ss.last_text}")
+    if ss.last_text:
+        OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+        OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "gpt-5-nano",
+            "messages": [
+                {"role": "system", "content": "You are a clear, concise assistant."},
+                {"role": "user", "content": ss.last_text},
+            ],
+            "temperature": 0.6,
+            "max_tokens": 600,
+        }
+        try:
+            r = requests.post(OPENAI_CHAT_URL, headers=OPENAI_HEADERS, data=json.dumps(payload), timeout=60)
+            body = r.json()
+            reply = (body.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+            ss.last_reply = reply
+            debug(f"[openai] status {r.status_code}")
+            if reply and ss.session_id and ss.session_token:
+                send_text_to_avatar(ss.session_id, ss.session_token, reply)
+        except Exception as e:
+            st.error("ChatGPT call failed. See Debug for details.")
+            debug(f"[openai error] {repr(e)}")
 
-# ============ Actions (Test-1 and ChatGPT) ============
+# -------------- LLM Reply (read-only) --------------
+if ss.get("last_reply"):
+    st.subheader("ChatGPT Reply (read-only)")
+    st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed")
+
+# -------------- Debug box stays last --------------
+st.text_area("Debug", value="
+".join(ss.debug_buf), height=220, disabled=True)
+
 # Keep same action buttons/behavior as before; only viewer/session controls moved.
 col1, col2 = st.columns(2, gap="small")
 with col1:
@@ -327,7 +373,7 @@ with col2:
             OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
             OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "gpt-4o-mini",
+                "model": "gpt-5-nano",
                 "messages": [
                     {"role": "system", "content": "You are a clear, concise assistant."},
                     {"role": "user", "content": ss.last_text or ""},
