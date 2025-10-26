@@ -339,9 +339,7 @@ with col2:
                 # Append assistant reply to the edit box (so user sees dialogue inline)
                 if reply:
                     prev = st.session_state.get("gpt_query", "").rstrip()
-                    joiner = "
-
-" if prev else ""
+                    joiner = "\n\n" if prev else ""
                     st.session_state["gpt_query"] = f"{prev}{joiner}Assistant: {reply}"
                     # Optionally speak back via avatar if session is active
                     if ss.session_id and ss.session_token:
