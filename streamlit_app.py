@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-1
+# Ver-2
 # Avatharam-2.2 — UI Revamp (Streamlit app)
 # Cosmetic/layout update + sanity-wired to the previously working flow.
 # - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
@@ -48,7 +48,7 @@ FIXED_AVATAR = {
     "default_voice": "68dedac41a9f46a6a4271a95c733823c",
     "normal_preview": "https://files2.heygen.ai/avatar/v3/74447a27859a456c955e01f21ef18216_45620/preview_talk_1.webp",
     "pose_name": "June HR",
-    "status": "ACTIVE"
+    "status": "ACTIVE",
 }
 
 # ---------------- Secrets ----------------
@@ -234,6 +234,20 @@ if ss.show_sidebar:
 viewer_path = Path(__file__).parent / "viewer.html"
 viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
 
+def _image_compat(url: str, caption: str = ""):
+    """Show image with compatibility across Streamlit versions.
+    - Prefer use_container_width
+    - Fallback to deprecated use_column_width
+    - Final fallback: no sizing keyword
+    """
+    try:
+        st.image(url, caption=caption, use_container_width=True)
+    except TypeError:
+        try:
+            st.image(url, caption=caption, use_column_width=True)
+        except TypeError:
+            st.image(url, caption=caption)
+
 if viewer_loaded and viewer_path.exists():
     html = (
         viewer_path.read_text(encoding="utf-8")
@@ -246,7 +260,10 @@ if viewer_loaded and viewer_path.exists():
     components.html(html, height=340, scrolling=False)
 else:
     # Show the static preview image until a session is live
-    st.image(FIXED_AVATAR["normal_preview"], caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})", use_container_width=True)
+    _image_compat(
+        FIXED_AVATAR["normal_preview"],
+        caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
+    )
 
 # =================== Voice Recorder (mic_recorder) ===================
 # Keep location & behavior the same as the working version; only labels changed.
@@ -337,5 +354,7 @@ if ss.get("last_reply"):
     st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed")
 
 # -------------- Debug box --------------
-st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
+st.text_area("Debug", value="
+".join(ss.debug_buf), height=220, disabled=True)
+
 
