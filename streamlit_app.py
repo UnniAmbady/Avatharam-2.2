@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-3.1
+# Ver-3.2
 # Avatharam-2.2 — UI Revamp (Streamlit app)
 # Cosmetic/layout update + sanity-wired to the previously working flow.
 # - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
@@ -283,7 +283,7 @@ else:
         stop_prompt="Stop",
         just_once=False,
         use_container_width=False,
-        key="mic_recorder",
+        key="mic_recorder_main",
         format="wav",
     )
     if isinstance(audio, dict) and "bytes" in audio:
@@ -307,14 +307,14 @@ if wav_bytes:
 # ============ Actions row (Test-1 + ChatGPT1) ============
 col1, col2 = st.columns(2, gap="small")
 with col1:
-    if st.button("Test-1", use_container_width=True):
+    if st.button("Test-1", key="btn_test1_main", use_container_width=True):
         if not (ss.session_id and ss.session_token and ss.offer_sdp):
             st.warning("Start a session first.")
         else:
             send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
 with col2:
     # Old flow restored: send whatever is in the edit box to ChatGPT on button press
-    if st.button("ChatGPT1", use_container_width=True):
+    if st.button("ChatGPT1", key="btn_chatgpt1_main", use_container_width=True):
         # Take current editable content from the box (gpt_query)
         ss.last_text = (st.session_state.get("gpt_query", "") or "").strip()
         debug(f"[user→gpt] {ss.last_text}")
@@ -392,7 +392,7 @@ st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
 # Keep same action buttons/behavior as before; only viewer/session controls moved.
 col1, col2 = st.columns(2, gap="small")
 with col1:
-    if st.button("Test-1", use_container_width=True):
+    if st.button("Test-1", key="btn_test1_main", use_container_width=True):
         if not (ss.session_id and ss.session_token and ss.offer_sdp):
             st.warning("Start a session first.")
         else:
@@ -434,6 +434,7 @@ if ss.get("last_reply"):
 
 # -------------- Debug box --------------
 st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
+
 
 
 
