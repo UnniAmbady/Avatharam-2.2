@@ -47,7 +47,8 @@ FIXED_AVATAR = {
     "avatar_id": "June_HR_public",
     "default_voice": "68dedac41a9f46a6a4271a95c733823c",
     "normal_preview": "https://files2.heygen.ai/avatar/v3/74447a27859a456c955e01f21ef18216_45620/preview_talk_1.webp",
-    "pose_name": "June HR"
+    "pose_name": "June HR",
+    "status": "ACTIVE"
 }
 
 # ---------------- Secrets ----------------
