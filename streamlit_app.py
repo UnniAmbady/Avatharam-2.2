@@ -1,42 +1,32 @@
 # Avatharam-2.2
-# Ver-3.3
-# Avatharam-2.2 — UI Revamp (Streamlit app)
-# Cosmetic/layout update + sanity-wired to the previously working flow.
-# - ☰ Trigram toggles side panel; Start/Stop moved there (Start label only).
-# - Fixed avatar (June_HR_public). No selector and no extra text.
-# - On app start, show the static avatar preview image in the main panel.
-#   When a session is started, the viewer replaces that image in-place.
-# - Below the viewer area (same spot as before), mic_recorder renders with
-#   labels changed to Speak / Stop (behavior unchanged).
-# - Replace text edit box with st.chat_input (2-line look).
-# - Debug log kept in a text_area at the bottom, like the original.
+# Ver-4
+# Avatharam-2.2 — Ver-4 (refined)
+# - Fix DuplicateWidgetID by giving unique keys and rendering one copy of each widget
+# - Voice -> insert transcript into edit box, then st.rerun() for immediate UI update
+# - Edit box is a text_area (mobile friendly); ChatGPT1 sends its content and appends reply back
+# - Start/Stop in sidebar; fixed avatar; static preview until session live
 
 import json
 import os
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-# ---------------- Page ----------------
 st.set_page_config(page_title="Avatharam-2", layout="centered")
 st.text("by Krish Ambady")
 
-# --------------- CSS (2-line chat input + small polish) ---------------
+# ---------------- CSS ----------------
 st.markdown(
     """
 <style>
   .block-container { padding-top:.6rem; padding-bottom:1rem; }
   iframe { border:none; border-radius:16px; }
   .rowbtn .stButton>button { height:40px; font-size:.95rem; border-radius:12px; }
-  /* chat_input ~2 lines */
-  div.stChatInput textarea {
-      min-height: 3.4em !important;
-      max-height: 3.8em !important;
-  }
+  div.stChatInput textarea { min-height: 3.4em !important; max-height: 3.8em !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -69,7 +59,7 @@ if not OPENAI_API_KEY:
     st.error("Missing OpenAI API key in .streamlit/secrets.toml")
     st.stop()
 
-# --------------- HeyGen Endpoints --------------
+# ---------------- Endpoints ----------------
 BASE = "https://api.heygen.com/v1"
 API_STREAM_NEW = f"{BASE}/streaming.new"
 API_CREATE_TOKEN = f"{BASE}/streaming.create_token"
@@ -82,7 +72,6 @@ HEADERS_XAPI = {
     "Content-Type": "application/json",
 }
 
-
 def _headers_bearer(tok: str):
     return {
         "accept": "application/json",
@@ -90,7 +79,7 @@ def _headers_bearer(tok: str):
         "Content-Type": "application/json",
     }
 
-# --------- Debug buffer ----------
+# ---------------- Session State ----------------
 ss = st.session_state
 ss.setdefault("debug_buf", [])
 ss.setdefault("session_id", None)
@@ -101,17 +90,16 @@ ss.setdefault("last_text", "")
 ss.setdefault("last_reply", "")
 ss.setdefault("show_sidebar", False)
 ss.setdefault("Name", "Friend")
+ss.setdefault("gpt_query", "")
 
+# ---------------- Debug helper ----------------
 
 def debug(msg: str):
     ss.debug_buf.append(str(msg))
     if len(ss.debug_buf) > 1000:
         ss.debug_buf[:] = ss.debug_buf[-1000:]
 
-# ------------- HTTP helpers --------------
-
-import requests
-
+# ---------------- HTTP helpers ----------------
 
 def _post_xapi(url, payload=None):
     r = requests.post(url, headers=HEADERS_XAPI, data=json.dumps(payload or {}), timeout=60)
@@ -124,7 +112,7 @@ def _post_xapi(url, payload=None):
     if r.status_code >= 400:
         debug(raw)
         r.raise_for_status()
-    return r.status_code, body, raw
+    return r.status_code, body
 
 
 def _post_bearer(url, token, payload=None):
@@ -138,17 +126,15 @@ def _post_bearer(url, token, payload=None):
     if r.status_code >= 400:
         debug(raw)
         r.raise_for_status()
-    return r.status_code, body, raw
+    return r.status_code, body
 
-
-# ------------- Session helpers -------------
-
+# ---------------- HeyGen helpers ----------------
 
 def new_session(avatar_id: str, voice_id: Optional[str] = None):
     payload = {"avatar_id": avatar_id}
     if voice_id:
         payload["voice_id"] = voice_id
-    _, body, _ = _post_xapi(API_STREAM_NEW, payload)
+    _, body = _post_xapi(API_STREAM_NEW, payload)
     data = body.get("data") or {}
     sid = data.get("session_id")
     offer_sdp = (data.get("offer") or data.get("sdp") or {}).get("sdp")
@@ -166,7 +152,7 @@ def new_session(avatar_id: str, voice_id: Optional[str] = None):
 
 
 def create_session_token(session_id: str) -> str:
-    _, body, _ = _post_xapi(API_CREATE_TOKEN, {"session_id": session_id})
+    _, body = _post_xapi(API_CREATE_TOKEN, {"session_id": session_id})
     tok = (body.get("data") or {}).get("token") or (body.get("data") or {}).get("access_token")
     if not tok:
         raise RuntimeError(f"Missing token in response: {body}")
@@ -195,26 +181,24 @@ def stop_session(session_id: Optional[str], session_token: Optional[str]):
     except Exception as e:
         debug(f"[stop_session] {e}")
 
-
 # ---------------- Header: Trigram ----------------
 cols = st.columns([1, 12, 1])
 with cols[0]:
-    if st.button("☰", help="Open menu (Trigram for Heaven)"):
+    if st.button("☰", key="btn_trigram_main", help="Open menu (Trigram for Heaven)"):
         ss.show_sidebar = not ss.show_sidebar
         debug(f"[ui] sidebar -> {ss.show_sidebar}")
 
-# ---------------- Sidebar (Start/Stop moved) ----------------
+# ---------------- Sidebar (Start/Stop) ----------------
 if ss.show_sidebar:
     with st.sidebar:
         st.markdown("### Text")
-        if st.button("Start", key="start_btn"):
-            # Same code path as working version (was Start / Restart)
+        if st.button("Start", key="btn_start_sidebar"):
             if ss.session_id and ss.session_token:
                 stop_session(ss.session_id, ss.session_token)
                 time.sleep(0.2)
             debug("Step 1: streaming.new")
-            payload = new_session(FIXED_AVATAR["avatar_id"], FIXED_AVATAR.get("default_voice"))
-            sid, offer_sdp, rtc_config = payload["session_id"], payload["offer_sdp"], payload["rtc_config"]
+            created = new_session(FIXED_AVATAR["avatar_id"], FIXED_AVATAR.get("default_voice"))
+            sid, offer_sdp, rtc_config = created["session_id"], created["offer_sdp"], created["rtc_config"]
             debug("Step 2: streaming.create_token")
             tok = create_session_token(sid)
             debug("Step 3: sleep 1.0s before viewer")
@@ -222,7 +206,7 @@ if ss.show_sidebar:
             ss.session_id, ss.session_token = sid, tok
             ss.offer_sdp, ss.rtc_config = offer_sdp, rtc_config
             debug(f"[ready] session_id={sid[:8]}…")
-        if st.button("Stop", key="stop_btn"):
+        if st.button("Stop", key="btn_stop_sidebar"):
             stop_session(ss.session_id, ss.session_token)
             ss.session_id = None
             ss.session_token = None
@@ -235,11 +219,6 @@ viewer_path = Path(__file__).parent / "viewer.html"
 viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
 
 def _image_compat(url: str, caption: str = ""):
-    """Show image with compatibility across Streamlit versions.
-    - Prefer use_container_width
-    - Fallback to deprecated use_column_width
-    - Final fallback: no sizing keyword
-    """
     try:
         st.image(url, caption=caption, use_container_width=True)
     except TypeError:
@@ -259,14 +238,12 @@ if viewer_loaded and viewer_path.exists():
     )
     components.html(html, height=340, scrolling=False)
 else:
-    # Show the static preview image until a session is live
     _image_compat(
         FIXED_AVATAR["normal_preview"],
         caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
     )
 
-# =================== Voice Recorder (mic_recorder) ===================
-# Keep location & behavior the same as the working version; only labels changed.
+# ---------------- Voice recorder (A/B) ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
@@ -275,9 +252,7 @@ except Exception:
     _HAS_MIC = False
 
 wav_bytes: Optional[bytes] = None
-if not _HAS_MIC:
-    st.warning("`streamlit-mic-recorder` is not installed.")
-else:
+if _HAS_MIC:
     audio = mic_recorder(
         start_prompt="Speak",
         stop_prompt="Stop",
@@ -294,17 +269,17 @@ else:
         debug(f"[mic] received {len(wav_bytes)} bytes (raw)")
     else:
         debug("[mic] waiting for recording…")
+else:
+    st.warning("`streamlit-mic-recorder` is not installed.")
 
-# ---- Audio playback (B) + capture transcript into Edit Box
 if wav_bytes:
     st.audio(wav_bytes, format="audio/wav", autoplay=False)
-    # Replace this with your real ASR result when available
-    transcript_text = ss.last_text or "(voice captured)"
-    # Clear the edit box and place the transcript
-    st.session_state["gpt_query"] = transcript_text
+    transcript_text = ss.last_text or "(voice captured)"  # plug ASR when available
+    ss.gpt_query = transcript_text
     debug(f"[voice→editbox] {len(transcript_text)} chars")
+    st.rerun()  # ensure the edit box below shows updated text immediately
 
-# ============ Actions row (Test-1 + ChatGPT1) ============
+# ---------------- Actions row (Test-1 + ChatGPT1) ----------------
 col1, col2 = st.columns(2, gap="small")
 with col1:
     if st.button("Test-1", key="btn_test1_main", use_container_width=True):
@@ -313,105 +288,57 @@ with col1:
         else:
             send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
 with col2:
-    # Old flow restored: send whatever is in the edit box to ChatGPT on button press
     if st.button("ChatGPT1", key="btn_chatgpt1_main", use_container_width=True):
-        # Take current editable content from the box (gpt_query)
-        ss.last_text = (st.session_state.get("gpt_query", "") or "").strip()
-        debug(f"[user→gpt] {ss.last_text}")
-        if ss.last_text:
-            OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
-            OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        user_text = (ss.get("gpt_query") or "").strip()
+        if not user_text:
+            debug("[chatgpt] empty user text; skipping")
+        else:
+            debug(f"[user→gpt] {len(user_text)} chars")
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "gpt-5-nano",
+                "model": "gpt-4o-mini",  # use an available model in your account
                 "messages": [
                     {"role": "system", "content": "You are a clear, concise assistant."},
-                    {"role": "user", "content": ss.last_text},
+                    {"role": "user", "content": user_text},
                 ],
                 "temperature": 0.6,
                 "max_tokens": 600,
             }
             try:
-                r = requests.post(OPENAI_CHAT_URL, headers=OPENAI_HEADERS, data=json.dumps(payload), timeout=60)
+                r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
+                debug(f"[openai] status {r.status_code}")
                 body = r.json()
                 reply = (body.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-                ss.last_reply = reply
-                debug(f"[openai] status {r.status_code}")
-                # Append assistant reply to the edit box (so user sees dialogue inline)
                 if reply:
-                    prev = st.session_state.get("gpt_query", "").rstrip()
+                    prev = (ss.get("gpt_query") or "").rstrip()
                     joiner = "\n\n" if prev else ""
-                    st.session_state["gpt_query"] = f"{prev}{joiner}Assistant: {reply}"
-                    # Optionally speak back via avatar if session is active
+                    ss.gpt_query = f"{prev}{joiner}Assistant: {reply}"
                     if ss.session_id and ss.session_token:
                         send_text_to_avatar(ss.session_id, ss.session_token, reply)
+                else:
+                    debug(f"[openai] empty reply: {body}")
             except Exception as e:
                 st.error("ChatGPT call failed. See Debug for details.")
                 debug(f"[openai error] {repr(e)}")
 
-# -------------- Edit box (F) — under Test-1 (no chat_input) --------------
-# We use a normal text_area so mobile users can edit easily. ChatGPT1 sends this content.
-st.session_state.setdefault("gpt_query", st.session_state.get("gpt_query", ""))
-st.session_state["gpt_query"] = st.text_area(
-    "",
-    value=st.session_state.get("gpt_query", ""),
-    height=120,
+# ---------------- Edit box (F) under buttons ----------------
+ss.gpt_query = st.text_area(
+    "Edit message",
+    value=ss.get("gpt_query", ""),
+    height=140,
     label_visibility="collapsed",
     key="txt_edit_gpt_query",
 )
 
-# -------------- LLM Reply (read-only) --------------
+# ---------------- Reply panel (read-only) ----------------
 if ss.get("last_reply"):
     st.subheader("ChatGPT Reply (read-only)")
-    st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed")
+    st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed", key="txt_reply_ro")
 
-# -------------- Debug box stays last --------------
-st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
+# ---------------- Debug (last) ----------------
+st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True, key="txt_debug_ro")
 
-# Keep same action buttons/behavior as before; only viewer/session controls moved.
-col1, col2 = st.columns(2, gap="small")
-with col1:
-    if st.button("Test-1", key="btn_test1_main", use_container_width=True):
-        if not (ss.session_id and ss.session_token and ss.offer_sdp):
-            st.warning("Start a session first.")
-        else:
-            send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
-with col2:
-    if st.button("ChatGPT", use_container_width=True):
-        if not (ss.session_id and ss.session_token and ss.offer_sdp):
-            st.warning("Start a session first.")
-        else:
-            # Minimal OpenAI call using requests like original
-            OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
-            OPENAI_HEADERS = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "gpt-5-nano",
-                "messages": [
-                    {"role": "system", "content": "You are a clear, concise assistant."},
-                    {"role": "user", "content": ss.last_text or ""},
-                ],
-                "temperature": 0.6,
-                "max_tokens": 600,
-            }
-            try:
-                r = requests.post(OPENAI_CHAT_URL, headers=OPENAI_HEADERS, data=json.dumps(payload), timeout=60)
-                body = r.json()
-                reply = (body.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-                ss.last_reply = reply
-                debug(f"[openai] status {r.status_code}")
-                # Speak back via avatar (simple, no chunking)
-                if reply:
-                    send_text_to_avatar(ss.session_id, ss.session_token, reply)
-            except Exception as e:
-                st.error("ChatGPT call failed. See Debug for details.")
-                debug(f"[openai error] {repr(e)}")
-
-# -------------- LLM Reply (read-only) --------------
-if ss.get("last_reply"):
-    st.subheader("ChatGPT Reply (read-only)")
-    st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed")
-
-# -------------- Debug box --------------
-st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True)
 
 
 
