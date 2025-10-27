@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-5
+# Ver-5.2
 # Change log (Ver-5):
 # - After Speak/Stop, immediately transcribe captured audio to text (LOCAL ASR)
 # - Overwrite the edit textbox content with the transcript
@@ -321,14 +321,24 @@ ss.setdefault("voice_inserted_once", False)    # we already pushed transcript in
 # Simple header sniffer to set correct MIME for st.audio (fixes 0:00/0:00 & iOS error)
 
 def sniff_mime(b: bytes) -> str:
-    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
-        return "audio/wav"
-    if b.startswith(b"ID3") or (len(b) > 1 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0):
-        return "audio/mpeg"
-    if b.startswith(b"OggS"):
-        return "audio/ogg"
-    if b[:4] == b"Eß£":  # EBML (webm)
-        return "audio/webm"
+    """Best-effort content sniffing to choose the right audio MIME.
+    Avoids hard-coding 'audio/wav' which breaks iOS/Chrome WebM/OGG.
+    Uses ASCII-only byte escapes to stay Python-safe.
+    """
+    try:
+        if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
+            return "audio/wav"
+        # MP3: ID3 tag or MPEG frame sync 0xFFEx
+        if b.startswith(b"ID3") or (len(b) > 1 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0):
+            return "audio/mpeg"
+        # OGG
+        if b.startswith(b"OggS"):
+            return "audio/ogg"
+        # EBML header for WebM: 0x1A 0x45 0xDF 0xA3
+        if len(b) >= 4 and b[:4] == b"Eß£":
+            return "audio/webm"
+    except Exception:
+        pass
     return "audio/wav"  # safe default
 
 wav_bytes: Optional[bytes] = None
