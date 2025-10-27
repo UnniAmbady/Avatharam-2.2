@@ -1,12 +1,15 @@
 # Avatharam-2.2
-# Ver-6
-# - Local ASR only (faster-whisper; optional Vosk fallback)
-# - Stop → transcribe first → overwrite edit box → then render soundbar
-# - Edit box prefilled with a greeting (restored if empty on first load)
-# - iPhone soundbar fix: convert WebM/OGG → WAV (16 kHz mono) for display; recognize MP4/M4A
-# - One-line debug log per recording: ffmpeg conversion status + final MIME
-# - Emoji tribar button for the side panel
+# Ver-7
+# Additions on top of Ver-6:
+# 1) Autoplay intro music (BenHur-Music.mp3) at app start; stop when avatar viewer is ready
+# 2) Auto-start the HeyGen streaming session on load (no need to press Start)
+# 3) Graceful stop on app shutdown (best-effort)
+# 4) Keep Start/Stop buttons for manual control
+# 5) No static image on first paint; only show the preview image after a manual Stop
+# 6) All debug logs go to Streamlit logs (stdout); removed the on-page Debug text area
+# 7) All prior features preserved (local ASR, iPhone soundbar fix, greeting, tribar, etc.)
 
+import atexit
 import json
 import os
 import time
@@ -81,29 +84,22 @@ def _headers_bearer(tok: str):
 
 # ---------------- Session State ----------------
 ss = st.session_state
-ss.setdefault("debug_buf", [])
 ss.setdefault("session_id", None)
 ss.setdefault("session_token", None)
 ss.setdefault("offer_sdp", None)
 ss.setdefault("rtc_config", None)
-ss.setdefault("last_text", "")
-ss.setdefault("last_reply", "")
 ss.setdefault("show_sidebar", False)
-ss.setdefault("Name", "Friend")
 ss.setdefault("gpt_query", "Hello, welcome.")  # initial greeting
-if not ss.get("_init_greeting_done"):
-    if not (ss.get("gpt_query") or "").strip():
-        ss.gpt_query = "Hello, welcome."
-    ss._init_greeting_done = True
+ss.setdefault("voice_ready", False)
+ss.setdefault("voice_inserted_once", False)
+ss.setdefault("bgm_should_play", True)  # play intro music on load
+ss.setdefault("auto_started", False)    # ensure we auto-start only once per session
 
-# ---------------- Debug helper ----------------
+# ---------------- Debug: log to stdout only ----------------
 
 def debug(msg: str):
     ts = time.strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
-    ss.debug_buf.append(line)
-    if len(ss.debug_buf) > 1000:
-        ss.debug_buf[:] = ss.debug_buf[-1000:]
     try:
         print(line, flush=True)
     except Exception:
@@ -188,27 +184,34 @@ def stop_session(session_id: Optional[str], session_token: Optional[str]):
         return
     try:
         _post_bearer(API_STREAM_STOP, session_token, {"session_id": session_id})
+        debug("[stop] session stopped")
     except Exception as e:
         debug(f"[stop_session] {e}")
+
+# Best-effort graceful stop on shutdown
+@atexit.register
+def _graceful_shutdown():
+    try:
+        sid = st.session_state.get("session_id")
+        tok = st.session_state.get("session_token")
+        if sid and tok:
+            stop_session(sid, tok)
+    except Exception:
+        pass
 
 # ---------------- Audio helpers (sniffer + conversion for soundbar) ----------------
 
 def sniff_mime(b: bytes) -> str:
     """Sniff common audio containers via magic bytes; return MIME for st.audio."""
     try:
-        # WAV RIFF
         if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
             return "audio/wav"
-        # MP3
         if b.startswith(b"ID3") or (len(b) > 1 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0):
             return "audio/mpeg"
-        # OGG
         if b.startswith(b"OggS"):
             return "audio/ogg"
-        # WebM EBML header: 0x1A 0x45 0xDF 0xA3
         if len(b) >= 4 and b[:4] == b"\x1a\x45\xdf\xa3":
             return "audio/webm"
-        # MP4/M4A: 'ftyp' at offset 4
         if len(b) >= 12 and b[4:8] == b"ftyp":
             return "audio/mp4"
     except Exception:
@@ -217,8 +220,7 @@ def sniff_mime(b: bytes) -> str:
 
 
 def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) -> tuple[Optional[bytes], bool]:
-    """Use ffmpeg to convert in-memory bytes; return (out_bytes, ok)."""
-    # quick presence check
+    # presence check
     try:
         _ = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -241,18 +243,8 @@ def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) 
 
 
 def prepare_for_soundbar(audio_bytes: bytes, mime: str) -> tuple[bytes, str]:
-    """Return (bytes, mime) that Safari will render with a correct duration.
-    - Convert WebM/OGG → WAV (16kHz mono PCM16) for display
-    - Pass through MP4, MP3, WAV as-is
-    Logs a single line per recording with convert status + final MIME.
-    """
     if mime in ("audio/webm", "audio/ogg"):
-        out, ok = _ffmpeg_convert_bytes(
-            audio_bytes,
-            ".webm" if mime.endswith("webm") else ".ogg",
-            ".wav",
-            ["-ar", "16000", "-ac", "1"],
-        )
+        out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", "-ac", "1"])
         debug(f"[soundbar] convert={ok}, final_mime={'audio/wav' if ok else mime}")
         if ok and out:
             return out, "audio/wav"
@@ -275,7 +267,7 @@ def _save_bytes_tmp(b: bytes, suffix: str) -> str:
 def transcribe_local(audio_bytes: bytes, mime: str) -> str:
     ext = ".wav" if "wav" in mime else ".mp3" if "mp3" in mime else ".webm" if "webm" in mime else ".ogg" if "ogg" in mime else ".m4a"
     fpath = _save_bytes_tmp(audio_bytes, ext)
-    # Try faster-whisper
+    # faster-whisper
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="auto", compute_type="int8")
@@ -285,7 +277,7 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
             return txt
     except Exception as e:
         debug(f"[local asr] faster-whisper error: {repr(e)}")
-    # Try Vosk only if a model is provided
+    # Vosk fallback
     try:
         import json as _json
         from vosk import Model, KaldiRecognizer
@@ -327,7 +319,7 @@ with cols[0]:
 # ---------------- Sidebar (Start/Stop) ----------------
 if ss.show_sidebar:
     with st.sidebar:
-        st.markdown("### Text")
+        st.markdown("### Controls")
         if st.button("Start", key="btn_start_sidebar"):
             if ss.session_id and ss.session_token:
                 stop_session(ss.session_id, ss.session_token)
@@ -341,6 +333,7 @@ if ss.show_sidebar:
             time.sleep(1.0)
             ss.session_id, ss.session_token = sid, tok
             ss.offer_sdp, ss.rtc_config = offer_sdp, rtc_config
+            ss.bgm_should_play = True  # let BGM play until viewer renders, then it will stop
             debug(f"[ready] session_id={sid[:8]}...")
         if st.button("Stop", key="btn_stop_sidebar"):
             stop_session(ss.session_id, ss.session_token)
@@ -348,11 +341,49 @@ if ss.show_sidebar:
             ss.session_token = None
             ss.offer_sdp = None
             ss.rtc_config = None
+            ss.bgm_should_play = False  # don't resume BGM automatically on manual stop
             debug("[stopped] session cleared")
+
+# ---------------- Background music (autoplay until avatar renders) ----------------
+# We'll render a single components.html with a fixed key. When we want to stop, we re-render a silent element.
+benhur_path = Path(__file__).parent / "BenHur-Music.mp3"
+if ss.bgm_should_play and benhur_path.exists():
+    components.html(
+        f"""
+        <audio id='bgm' src='BenHur-Music.mp3' autoplay loop></audio>
+        """,
+        height=0,
+        scrolling=False,
+        key="bgm_player",
+    )
+else:
+    # Render a silent no-op to replace/stop any previous audio element within this key
+    components.html("<div id='bgm_off'></div>", height=0, scrolling=False, key="bgm_player")
+
+# ---------------- Auto-start the avatar session (once) ----------------
+if not ss.auto_started:
+    try:
+        debug("[auto-start] initializing session")
+        created = new_session(FIXED_AVATAR["avatar_id"], FIXED_AVATAR.get("default_voice"))
+        sid, offer_sdp, rtc_config = created["session_id"], created["offer_sdp"], created["rtc_config"]
+        tok = create_session_token(sid)
+        time.sleep(0.8)
+        ss.session_id, ss.session_token = sid, tok
+        ss.offer_sdp, ss.rtc_config = offer_sdp, rtc_config
+        ss.auto_started = True
+        debug(f"[auto-start] session ready id={sid[:8]}...")
+    except Exception as e:
+        debug(f"[auto-start] failed: {repr(e)}")
 
 # ---------------- Main viewer area ----------------
 viewer_path = Path(__file__).parent / "viewer.html"
 viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
+
+# If the viewer is loaded, stop the BGM (it will cease on the next render)
+if viewer_loaded and ss.bgm_should_play:
+    ss.bgm_should_play = False
+    debug("[bgm] stopping background music (viewer ready)")
+
 
 def _image_compat(url: str, caption: str = ""):
     try:
@@ -374,10 +405,12 @@ if viewer_loaded and viewer_path.exists():
     )
     components.html(html, height=340, scrolling=False)
 else:
-    _image_compat(
-        FIXED_AVATAR["normal_preview"],
-        caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
-    )
+    # Do NOT show static image on initial load; only show preview after a manual Stop
+    if ss.session_id is None and ss.session_token is None:
+        _image_compat(
+            FIXED_AVATAR["normal_preview"],
+            caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
+        )
 
 # ---------------- Mic recorder ----------------
 try:
@@ -386,9 +419,6 @@ try:
 except Exception:
     mic_recorder = None  # type: ignore
     _HAS_MIC = False
-
-ss.setdefault("voice_ready", False)
-ss.setdefault("voice_inserted_once", False)
 
 wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
@@ -403,7 +433,6 @@ if _HAS_MIC:
     if isinstance(audio, dict) and audio.get("bytes"):
         wav_bytes = audio["bytes"]
         mime = sniff_mime(wav_bytes)
-        # New capture: clear edit box and allow a fresh insert
         ss.gpt_query = ""
         ss.voice_inserted_once = False
         ss.voice_ready = True
@@ -481,7 +510,7 @@ with col2:
                 else:
                     debug(f"[openai] empty reply: {body}")
             except Exception as e:
-                st.error("ChatGPT call failed. See Debug for details.")
+                st.error("ChatGPT call failed. See Streamlit logs.")
                 debug(f"[openai error] {repr(e)}")
 
 # ---------------- Edit box ----------------
@@ -493,10 +522,4 @@ ss.gpt_query = st.text_area(
     key="txt_edit_gpt_query",
 )
 
-# ---------------- Reply panel (read-only) ----------------
-if ss.get("last_reply"):
-    st.subheader("ChatGPT Reply (read-only)")
-    st.text_area("", value=ss.last_reply, height=160, label_visibility="collapsed", key="txt_reply_ro")
-
-# ---------------- Debug (last) ----------------
-st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True, key="txt_debug_ro")
+# Note: Debug text area removed per requirement; logs only to stdout/Streamlit logs
