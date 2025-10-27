@@ -242,9 +242,9 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
                 return txt
             if txt:
             return txt
-    except Exception as e:
-        st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
-    return ""
+        except Exception as e:
+            st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
+        return ""
         txt = " ".join(s.text.strip() for s in segments).strip()
         if txt:
             return txt
