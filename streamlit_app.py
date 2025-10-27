@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-7
+# Ver-7.1
 # Additions on top of Ver-6:
 # 1) Autoplay intro music (BenHur-Music.mp3) at app start; stop when avatar viewer is ready
 # 2) Auto-start the HeyGen streaming session on load (no need to press Start)
@@ -7,7 +7,7 @@
 # 4) Keep Start/Stop buttons for manual control
 # 5) No static image on first paint; only show the preview image after a manual Stop
 # 6) All debug logs go to Streamlit logs (stdout); removed the on-page Debug text area
-# 7) All prior features preserved (local ASR, iPhone soundbar fix, greeting, tribar, etc.)
+# 7) iPhone soundbar fix (WebM/OGG→WAV for display), local ASR, greeting, tribar, etc.
 
 import atexit
 import json
@@ -92,11 +92,10 @@ ss.setdefault("show_sidebar", False)
 ss.setdefault("gpt_query", "Hello, welcome.")  # initial greeting
 ss.setdefault("voice_ready", False)
 ss.setdefault("voice_inserted_once", False)
-ss.setdefault("bgm_should_play", True)  # play intro music on load
-ss.setdefault("auto_started", False)    # ensure we auto-start only once per session
+ss.setdefault("bgm_should_play", True)   # play intro music on load
+ss.setdefault("auto_started", False)     # ensure we auto-start only once per session
 
 # ---------------- Debug: log to stdout only ----------------
-
 def debug(msg: str):
     ts = time.strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
@@ -106,7 +105,6 @@ def debug(msg: str):
         pass
 
 # ---------------- HTTP helpers ----------------
-
 def _post_xapi(url, payload=None):
     r = requests.post(url, headers=HEADERS_XAPI, data=json.dumps(payload or {}), timeout=60)
     raw = r.text
@@ -119,7 +117,6 @@ def _post_xapi(url, payload=None):
         debug(raw)
         r.raise_for_status()
     return r.status_code, body
-
 
 def _post_bearer(url, token, payload=None):
     r = requests.post(url, headers=_headers_bearer(token), data=json.dumps(payload or {}), timeout=60)
@@ -135,7 +132,6 @@ def _post_bearer(url, token, payload=None):
     return r.status_code, body
 
 # ---------------- HeyGen helpers ----------------
-
 def new_session(avatar_id: str, voice_id: Optional[str] = None):
     payload = {"avatar_id": avatar_id}
     if voice_id:
@@ -156,14 +152,12 @@ def new_session(avatar_id: str, voice_id: Optional[str] = None):
         raise RuntimeError(f"Missing session_id or offer in response: {body}")
     return {"session_id": sid, "offer_sdp": offer_sdp, "rtc_config": rtc_config}
 
-
 def create_session_token(session_id: str) -> str:
     _, body = _post_xapi(API_CREATE_TOKEN, {"session_id": session_id})
     tok = (body.get("data") or {}).get("token") or (body.get("data") or {}).get("access_token")
     if not tok:
         raise RuntimeError(f"Missing token in response: {body}")
     return tok
-
 
 def send_text_to_avatar(session_id: str, session_token: str, text: str):
     debug(f"[avatar] speak {len(text)} chars")
@@ -177,7 +171,6 @@ def send_text_to_avatar(session_id: str, session_token: str, text: str):
             "text": text,
         },
     )
-
 
 def stop_session(session_id: Optional[str], session_token: Optional[str]):
     if not (session_id and session_token):
@@ -200,7 +193,6 @@ def _graceful_shutdown():
         pass
 
 # ---------------- Audio helpers (sniffer + conversion for soundbar) ----------------
-
 def sniff_mime(b: bytes) -> str:
     """Sniff common audio containers via magic bytes; return MIME for st.audio."""
     try:
@@ -217,7 +209,6 @@ def sniff_mime(b: bytes) -> str:
     except Exception:
         pass
     return "audio/wav"
-
 
 def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) -> tuple[Optional[bytes], bool]:
     # presence check
@@ -241,7 +232,6 @@ def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) 
         debug(f"[ffmpeg] conversion failed: {repr(e)}")
         return None, False
 
-
 def prepare_for_soundbar(audio_bytes: bytes, mime: str) -> tuple[bytes, str]:
     if mime in ("audio/webm", "audio/ogg"):
         out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", "-ac", "1"])
@@ -256,13 +246,11 @@ def prepare_for_soundbar(audio_bytes: bytes, mime: str) -> tuple[bytes, str]:
     return audio_bytes, mime
 
 # ---------------- Local ASR helper ----------------
-
 def _save_bytes_tmp(b: bytes, suffix: str) -> str:
     tmp = Path("/tmp") if Path("/tmp").exists() else Path.cwd()
     f = tmp / f"audio_{int(time.time()*1000)}{suffix}"
     f.write_bytes(b)
     return str(f)
-
 
 def transcribe_local(audio_bytes: bytes, mime: str) -> str:
     ext = ".wav" if "wav" in mime else ".mp3" if "mp3" in mime else ".webm" if "webm" in mime else ".ogg" if "ogg" in mime else ".m4a"
@@ -345,20 +333,19 @@ if ss.show_sidebar:
             debug("[stopped] session cleared")
 
 # ---------------- Background music (autoplay until avatar renders) ----------------
-# We'll render a single components.html with a fixed key. When we want to stop, we re-render a silent element.
+# Removed key=... to avoid TypeError with your Streamlit build
 benhur_path = Path(__file__).parent / "BenHur-Music.mp3"
 if ss.bgm_should_play and benhur_path.exists():
     components.html(
-        f"""
+        """
         <audio id='bgm' src='BenHur-Music.mp3' autoplay loop></audio>
         """,
         height=0,
         scrolling=False,
-        key="bgm_player",
     )
 else:
-    # Render a silent no-op to replace/stop any previous audio element within this key
-    components.html("<div id='bgm_off'></div>", height=0, scrolling=False, key="bgm_player")
+    # Render a silent no-op to replace/stop any previous audio element
+    components.html("<div id='bgm_off'></div>", height=0, scrolling=False)
 
 # ---------------- Auto-start the avatar session (once) ----------------
 if not ss.auto_started:
@@ -383,7 +370,6 @@ viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
 if viewer_loaded and ss.bgm_should_play:
     ss.bgm_should_play = False
     debug("[bgm] stopping background music (viewer ready)")
-
 
 def _image_compat(url: str, caption: str = ""):
     try:
@@ -521,5 +507,3 @@ ss.gpt_query = st.text_area(
     label_visibility="collapsed",
     key="txt_edit_gpt_query",
 )
-
-# Note: Debug text area removed per requirement; logs only to stdout/Streamlit logs
