@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-5.1
+# Ver-5
 # Change log (Ver-5):
 # - After Speak/Stop, immediately transcribe captured audio to text (LOCAL ASR)
 # - Overwrite the edit textbox content with the transcript
