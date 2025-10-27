@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-5.2
+# Ver-5.3
 # Change log (Ver-5):
 # - After Speak/Stop, immediately transcribe captured audio to text (LOCAL ASR)
 # - Overwrite the edit textbox content with the transcript
@@ -204,7 +204,45 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="auto", compute_type="int8")
-        segments, info = model.transcribe(fpath, beam_size=1)
+        segments, info = model.transcribe(fpath, beam_size=1, language="en")
+        txt = " ".join(s.text.strip() for s in segments).strip()
+        if txt:
+            return txt
+    except Exception as e:
+        st.session_state.debug_buf.append(f"[local asr] faster-whisper error: {repr(e)}")
+    # Try Vosk only if model path provided
+    try:
+        import json as _json
+        from vosk import Model, KaldiRecognizer
+        model_path = os.getenv("VOSK_MODEL_PATH")
+        if model_path and Path(model_path).exists():
+            import subprocess
+            # Convert to 16k mono wav using ffmpeg if available; otherwise skip
+            outwav = fpath if fpath.endswith(".wav") else fpath + ".wav"
+            try:
+                subprocess.run(["ffmpeg", "-y", "-i", fpath, "-ar", "16000", "-ac", "1", outwav], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                outwav = fpath  # hope it's already wav
+            import wave
+            wf = wave.open(outwav, "rb")
+            rec = KaldiRecognizer(Model(model_path), wf.getframerate())
+            rec.SetWords(True)
+            result = []
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                if rec.AcceptWaveform(data):
+                    j = _json.loads(rec.Result())
+                    result.append(j.get("text", ""))
+            j = _json.loads(rec.FinalResult())
+            result.append(j.get("text", ""))
+            txt = " ".join(x.strip() for x in result if x).strip()
+            if txt:
+                return txt
+    except Exception as e:
+        st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
+    return ""fpath, beam_size=1)
         txt = " ".join(s.text.strip() for s in segments).strip()
         if txt:
             return txt
@@ -335,7 +373,7 @@ def sniff_mime(b: bytes) -> str:
         if b.startswith(b"OggS"):
             return "audio/ogg"
         # EBML header for WebM: 0x1A 0x45 0xDF 0xA3
-        if len(b) >= 4 and b[:4] == b"\x1a\x45\xdf\xa3":
+        if len(b) >= 4 and b[:4] == b"Eß£":
             return "audio/webm"
     except Exception:
         pass
@@ -368,10 +406,8 @@ else:
     st.warning("`streamlit-mic-recorder` is not installed.")
 
 if ss.voice_ready and wav_bytes:
-    # Use detected MIME (Streamlit wants 'audio/xxx')
-    st.audio(wav_bytes, format=mime, autoplay=False)
+    # 1) TRANSCRIBE FIRST → edit box should show immediately
     if not ss.voice_inserted_once:
-        # LOCAL transcription
         transcript_text = ""
         try:
             transcript_text = transcribe_local(wav_bytes, mime)
@@ -381,8 +417,9 @@ if ss.voice_ready and wav_bytes:
             transcript_text = "(no speech recognized)"
         ss.gpt_query = transcript_text  # overwrite any existing text
         ss.voice_inserted_once = True
-        debug(f"[voice→editbox] {len(transcript_text)} chars; rerun once to refresh UI")
-        st.rerun()
+        debug(f"[voice→editbox] {len(transcript_text)} chars; proceeding to soundbar")
+    # 2) THEN render the soundbar (so iOS/PC both see duration)
+    st.audio(wav_bytes, format=mime, autoplay=False)
 
 # Reset voice_ready flag after we've had a chance to render the audio bar once
 if ss.voice_ready and ss.voice_inserted_once:
