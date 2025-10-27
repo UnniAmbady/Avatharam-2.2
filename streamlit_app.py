@@ -335,7 +335,7 @@ def sniff_mime(b: bytes) -> str:
         if b.startswith(b"OggS"):
             return "audio/ogg"
         # EBML header for WebM: 0x1A 0x45 0xDF 0xA3
-        if len(b) >= 4 and b[:4] == b"Eß£":
+        if len(b) >= 4 and b[:4] == b"\x1a\x45\xdf\xa3":
             return "audio/webm"
     except Exception:
         pass
