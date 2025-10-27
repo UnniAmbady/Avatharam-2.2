@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-5.6
+# Ver-5.4
 # Notes:
 # - Local ASR only (faster-whisper; optional Vosk fallback).
 # - After Stop: transcribe first (overwrite edit box), then render the audio bar.
@@ -376,7 +376,8 @@ if ss.voice_ready and wav_bytes:
         ss.voice_inserted_once = True
         debug(f"[voice->editbox] {len(transcript_text)} chars")
     # 2) Then render the audio bar
-    st.audio(wav_bytes, format=mime, autoplay=False)
+    bar_bytes, bar_mime = prepare_for_soundbar(wav_bytes, mime)
+    st.audio(bar_bytes, format=bar_mime, autoplay=False)
 
 # Reset flags after first render cycle
 if ss.voice_ready and ss.voice_inserted_once:
