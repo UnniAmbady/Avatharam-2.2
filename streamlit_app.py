@@ -1,9 +1,9 @@
 # Avatharam-2.2
-# Ver-5.3
-# Change log (Ver-5):
-# - After Speak/Stop, immediately transcribe captured audio to text (LOCAL ASR)
-# - Overwrite the edit textbox content with the transcript
-# - Keep all other code exactly as-is
+# Ver-5.5
+# Notes:
+# - Local ASR only (faster-whisper; optional Vosk fallback).
+# - After Stop: transcribe first (overwrite edit box), then render the audio bar.
+# - Initialize edit box with a friendly greeting so ChatGPT can reply immediately.
 
 import json
 import os
@@ -16,7 +16,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Avatharam-2", layout="centered")
-st.text("by Krish Ambady")
 st.text("by Krish Ambady")
 
 # ---------------- CSS ----------------
@@ -88,7 +87,13 @@ ss.setdefault("last_text", "")
 ss.setdefault("last_reply", "")
 ss.setdefault("show_sidebar", False)
 ss.setdefault("Name", "Friend")
-ss.setdefault("gpt_query", "")
+ss.setdefault("gpt_query", "Hello, welcome.")  # Initial greeting
+
+# If somehow blank, restore the greeting once at startup
+if not ss.get("_init_greeting_done"):
+    if not (ss.get("gpt_query") or "").strip():
+        ss.gpt_query = "Hello, welcome."
+    ss._init_greeting_done = True
 
 # ---------------- Debug helper ----------------
 
@@ -179,88 +184,42 @@ def stop_session(session_id: Optional[str], session_token: Optional[str]):
     except Exception as e:
         debug(f"[stop_session] {e}")
 
-# ---------------- Local ASR helper (UPDATED in Ver-5) ----------------
-# We avoid OpenAI for transcription. Try faster-whisper (tiny) locally.
-# Falls back to Vosk iff a model path is provided via VOSK_MODEL_PATH.
+# ---------------- Local ASR helper ----------------
+# Local transcription: faster-whisper (tiny) with optional Vosk fallback.
+
 
 def _save_bytes_tmp(b: bytes, suffix: str) -> str:
-    p = Path(st.experimental_get_query_params().get("tmpdir", [str(Path.cwd())])[0])
-    # Use Streamlit's cache dir if available
-    try:
-        p = Path(st.runtime.scriptrunner.script_run_context.get_script_run_ctx().session_data.script_path).parent
-    except Exception:
-        pass
-    tmp = Path("/tmp") if Path("/tmp").exists() else p
+    tmp = Path("/tmp") if Path("/tmp").exists() else Path.cwd()
     f = tmp / f"audio_{int(time.time()*1000)}{suffix}"
     f.write_bytes(b)
     return str(f)
 
 
 def transcribe_local(audio_bytes: bytes, mime: str) -> str:
-    # Write to an appropriate temp file extension that whisper can read
     ext = ".wav" if "wav" in mime else ".mp3" if "mp3" in mime else ".webm" if "webm" in mime else ".ogg"
     fpath = _save_bytes_tmp(audio_bytes, ext)
     # Try faster-whisper
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="auto", compute_type="int8")
-        segments, info = model.transcribe(fpath, beam_size=1, language="en")
+        segments, _info = model.transcribe(fpath, beam_size=1, language="en")
         txt = " ".join(s.text.strip() for s in segments).strip()
         if txt:
             return txt
     except Exception as e:
         st.session_state.debug_buf.append(f"[local asr] faster-whisper error: {repr(e)}")
-    # Try Vosk only if model path provided
+    # Try Vosk only if a model is provided
     try:
         import json as _json
         from vosk import Model, KaldiRecognizer
         model_path = os.getenv("VOSK_MODEL_PATH")
         if model_path and Path(model_path).exists():
             import subprocess
-            # Convert to 16k mono wav using ffmpeg if available; otherwise skip
             outwav = fpath if fpath.endswith(".wav") else fpath + ".wav"
             try:
                 subprocess.run(["ffmpeg", "-y", "-i", fpath, "-ar", "16000", "-ac", "1", outwav], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
-                outwav = fpath  # hope it's already wav
-            import wave
-            wf = wave.open(outwav, "rb")
-            rec = KaldiRecognizer(Model(model_path), wf.getframerate())
-            rec.SetWords(True)
-            result = []
-            while True:
-                data = wf.readframes(4000)
-                if len(data) == 0:
-                    break
-                if rec.AcceptWaveform(data):
-                    j = _json.loads(rec.Result())
-                    result.append(j.get("text", ""))
-            j = _json.loads(rec.FinalResult())
-            result.append(j.get("text", ""))
-            txt = " ".join(x.strip() for x in result if x).strip()
-            if txt:
-                return txt
-    except Exception as e:
-        st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
-        return ""
-        txt = " ".join(s.text.strip() for s in segments).strip()
-        if txt:
-            return txt
-    except Exception as e:
-        st.session_state.debug_buf.append(f"[local asr] faster-whisper error: {repr(e)}")
-    # Try Vosk only if model path provided
-    try:
-        import json as _json
-        from vosk import Model, KaldiRecognizer
-        model_path = os.getenv("VOSK_MODEL_PATH")
-        if model_path and Path(model_path).exists():
-            import subprocess
-            # Convert to 16k mono wav using ffmpeg if available; otherwise skip
-            outwav = fpath if fpath.endswith(".wav") else fpath + ".wav"
-            try:
-                subprocess.run(["ffmpeg", "-y", "-i", fpath, "-ar", "16000", "-ac", "1", outwav], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                outwav = fpath  # hope it's already wav
+                outwav = fpath
             import wave
             wf = wave.open(outwav, "rb")
             rec = KaldiRecognizer(Model(model_path), wf.getframerate())
@@ -282,10 +241,10 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
         st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
     return ""
 
-# ---------------- Header: Trigram ----------------
+# ---------------- Header ----------------
 cols = st.columns([1, 12, 1])
 with cols[0]:
-    if st.button("☰", key="btn_trigram_main", help="Open menu (Trigram for Heaven)"):
+    if st.button("Menu", key="btn_trigram_main", help="Open side panel"):
         ss.show_sidebar = not ss.show_sidebar
         debug(f"[ui] sidebar -> {ss.show_sidebar}")
 
@@ -306,7 +265,7 @@ if ss.show_sidebar:
             time.sleep(1.0)
             ss.session_id, ss.session_token = sid, tok
             ss.offer_sdp, ss.rtc_config = offer_sdp, rtc_config
-            debug(f"[ready] session_id={sid[:8]}…")
+            debug(f"[ready] session_id={sid[:8]}...")
         if st.button("Stop", key="btn_stop_sidebar"):
             stop_session(ss.session_id, ss.session_token)
             ss.session_id = None
@@ -318,6 +277,7 @@ if ss.show_sidebar:
 # ---------------- Main viewer area ----------------
 viewer_path = Path(__file__).parent / "viewer.html"
 viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
+
 
 def _image_compat(url: str, caption: str = ""):
     try:
@@ -344,7 +304,7 @@ else:
         caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
     )
 
-# ---------------- Voice recorder (A/B) ----------------
+# ---------------- Mic recorder ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
@@ -352,24 +312,17 @@ except Exception:
     mic_recorder = None  # type: ignore
     _HAS_MIC = False
 
-# Flags to avoid rerun loops after capture
-ss.setdefault("voice_ready", False)            # mic produced audio this cycle
-ss.setdefault("voice_inserted_once", False)    # we already pushed transcript into edit box
+ss.setdefault("voice_ready", False)
+ss.setdefault("voice_inserted_once", False)
 
-# Simple header sniffer to set correct MIME for st.audio (fixes 0:00/0:00 & iOS error)
+# MIME sniffer for audio bytes
 
 def sniff_mime(b: bytes) -> str:
-    """Best-effort content sniffing to choose the right audio MIME.
-    Avoids hard-coding 'audio/wav' which breaks iOS/Chrome WebM/OGG.
-    Uses ASCII-only byte escapes to stay Python-safe.
-    """
     try:
         if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
             return "audio/wav"
-        # MP3: ID3 tag or MPEG frame sync 0xFFEx
         if b.startswith(b"ID3") or (len(b) > 1 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0):
             return "audio/mpeg"
-        # OGG
         if b.startswith(b"OggS"):
             return "audio/ogg"
         # EBML header for WebM: 0x1A 0x45 0xDF 0xA3
@@ -377,7 +330,7 @@ def sniff_mime(b: bytes) -> str:
             return "audio/webm"
     except Exception:
         pass
-    return "audio/wav"  # safe default
+    return "audio/wav"
 
 wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
@@ -385,10 +338,9 @@ if _HAS_MIC:
     audio = mic_recorder(
         start_prompt="Speak",
         stop_prompt="Stop",
-        just_once=True,                 # prevent continuous byte streams after Stop
+        just_once=True,
         use_container_width=False,
         key="mic_recorder_main",
-        # DO NOT force format; let browser choose (fixes iPhone Safari)
     )
     if isinstance(audio, dict) and audio.get("bytes"):
         wav_bytes = audio["bytes"]
@@ -401,31 +353,31 @@ if _HAS_MIC:
         ss.voice_ready = True
         debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
     else:
-        debug("[mic] waiting for recording…")
+        debug("[mic] waiting for recording...")
 else:
-    st.warning("`streamlit-mic-recorder` is not installed.")
+    st.warning("streamlit-mic-recorder is not installed.")
 
 if ss.voice_ready and wav_bytes:
-    # 1) TRANSCRIBE FIRST → edit box should show immediately
+    # 1) Transcribe first
     if not ss.voice_inserted_once:
         transcript_text = ""
         try:
             transcript_text = transcribe_local(wav_bytes, mime)
         except Exception as e:
-            debug(f"[voice→text error] {repr(e)}")
+            debug(f"[voice->text error] {repr(e)}")
         if not transcript_text:
             transcript_text = "(no speech recognized)"
-        ss.gpt_query = transcript_text  # overwrite any existing text
+        ss.gpt_query = transcript_text
         ss.voice_inserted_once = True
-        debug(f"[voice→editbox] {len(transcript_text)} chars; proceeding to soundbar")
-    # 2) THEN render the soundbar (so iOS/PC both see duration)
+        debug(f"[voice->editbox] {len(transcript_text)} chars")
+    # 2) Then render the audio bar
     st.audio(wav_bytes, format=mime, autoplay=False)
 
-# Reset voice_ready flag after we've had a chance to render the audio bar once
+# Reset flags after first render cycle
 if ss.voice_ready and ss.voice_inserted_once:
     ss.voice_ready = False
 
-# ---------------- Actions row (Test-1 + ChatGPT1) ----------------
+# ---------------- Actions row ----------------
 col1, col2 = st.columns(2, gap="small")
 with col1:
     if st.button("Test-1", key="btn_test1_main", use_container_width=True):
@@ -439,11 +391,11 @@ with col2:
         if not user_text:
             debug("[chatgpt] empty user text; skipping")
         else:
-            debug(f"[user→gpt] {len(user_text)} chars")
+            debug(f"[user->gpt] {len(user_text)} chars")
             url = "https://api.openai.com/v1/chat/completions"
             headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "gpt-4o-mini",  # use an available model in your account
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": "You are a clear, concise assistant."},
                     {"role": "user", "content": user_text},
@@ -468,10 +420,10 @@ with col2:
                 st.error("ChatGPT call failed. See Debug for details.")
                 debug(f"[openai error] {repr(e)}")
 
-# ---------------- Edit box (F) under buttons ----------------
+# ---------------- Edit box ----------------
 ss.gpt_query = st.text_area(
     "Edit message",
-    value=ss.get("gpt_query", ""),
+    value=ss.get("gpt_query", "Hello, welcome."),
     height=140,
     label_visibility="collapsed",
     key="txt_edit_gpt_query",
