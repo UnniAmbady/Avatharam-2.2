@@ -244,7 +244,7 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
 # ---------------- Header ----------------
 cols = st.columns([1, 12, 1])
 with cols[0]:
-    if st.button("Menu", key="btn_trigram_main", help="Open side panel"):
+    if st.button("🍔", key="btn_trigram_main", help="Open side panel"):
         ss.show_sidebar = not ss.show_sidebar
         debug(f"[ui] sidebar -> {ss.show_sidebar}")
 
