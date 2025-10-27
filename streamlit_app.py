@@ -1,10 +1,9 @@
 # Avatharam-2.2
-# Ver-4.1
-# Avatharam-2.2 — Ver-4 (refined)
-# - Fix DuplicateWidgetID by giving unique keys and rendering one copy of each widget
-# - Voice -> insert transcript into edit box, then st.rerun() for immediate UI update
-# - Edit box is a text_area (mobile friendly); ChatGPT1 sends its content and appends reply back
-# - Start/Stop in sidebar; fixed avatar; static preview until session live
+# Ver-5
+# Change log (Ver-5):
+# - After Speak/Stop, immediately transcribe captured audio to text (OpenAI ASR)
+# - Overwrite the edit textbox content with the transcript
+# - Keep all other code exactly as-is
 
 import json
 import os
@@ -181,6 +180,34 @@ def stop_session(session_id: Optional[str], session_token: Optional[str]):
     except Exception as e:
         debug(f"[stop_session] {e}")
 
+# ---------------- OpenAI ASR helper (NEW in Ver-5) ----------------
+
+def transcribe_wav(wav_bytes: bytes) -> str:
+    """Send WAV bytes to OpenAI ASR and return transcript text.
+    Tries a modern transcribe model first, falls back to whisper-1.
+    """
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    models = ["gpt-4o-mini-transcribe", "whisper-1"]
+    for m in models:
+        try:
+            files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+            data = {"model": m}
+            r = requests.post(url, headers=headers, files=files, data=data, timeout=120)
+            try:
+                body = r.json()
+            except Exception:
+                body = {"_raw": r.text}
+            debug(f"[asr] {m} -> {r.status_code}")
+            txt = (body.get("text") or "").strip()
+            if r.ok and txt:
+                return txt
+            else:
+                debug(f"[asr] empty text / not ok: {body}")
+        except Exception as e:
+            debug(f"[asr error] {m}: {repr(e)}")
+    return ""  # nothing recognized or API error
+
 # ---------------- Header: Trigram ----------------
 cols = st.columns([1, 12, 1])
 with cols[0]:
@@ -281,9 +308,15 @@ else:
 if ss.voice_ready:
     st.audio(wav_bytes, format="audio/wav", autoplay=False)
     if not ss.voice_inserted_once:
-        # Replace this with your ASR result when available
-        transcript_text = ss.last_text or "(voice captured)"
-        ss.gpt_query = transcript_text
+        # NEW (Ver-5): transcribe captured audio -> overwrite edit box
+        transcript_text = ""
+        try:
+            transcript_text = transcribe_wav(wav_bytes or b"")
+        except Exception as e:
+            debug(f"[voice→text error] {repr(e)}")
+        if not transcript_text:
+            transcript_text = "(no speech recognized)"
+        ss.gpt_query = transcript_text  # overwrite any existing text
         ss.voice_inserted_once = True
         debug(f"[voice→editbox] {len(transcript_text)} chars; rerun once to refresh UI")
         st.rerun()  # one-time UI refresh so the edit box shows text immediately
@@ -351,8 +384,3 @@ if ss.get("last_reply"):
 
 # ---------------- Debug (last) ----------------
 st.text_area("Debug", value="\n".join(ss.debug_buf), height=220, disabled=True, key="txt_debug_ro")
-
-
-
-
-
