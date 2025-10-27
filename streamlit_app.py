@@ -1,5 +1,5 @@
 # Avatharam-2.2
-# Ver-5.5
+# Ver-5.6
 # Notes:
 # - Local ASR only (faster-whisper; optional Vosk fallback).
 # - After Stop: transcribe first (overwrite edit box), then render the audio bar.
@@ -244,7 +244,7 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
 # ---------------- Header ----------------
 cols = st.columns([1, 12, 1])
 with cols[0]:
-    if st.button("🍔", key="btn_trigram_main", help="Open side panel"):
+    if st.button("☰", key="btn_trigram_main", help="Open side panel"):
         ss.show_sidebar = not ss.show_sidebar
         debug(f"[ui] sidebar -> {ss.show_sidebar}")
 
@@ -345,11 +345,16 @@ if _HAS_MIC:
     if isinstance(audio, dict) and audio.get("bytes"):
         wav_bytes = audio["bytes"]
         mime = sniff_mime(wav_bytes)
+        # New capture: clear edit box and allow a fresh insert
+        ss.gpt_query = ""
+        ss.voice_inserted_once = False
         ss.voice_ready = True
         debug(f"[mic] received {len(wav_bytes)} bytes, mime={mime}")
     elif isinstance(audio, (bytes, bytearray)) and audio:
         wav_bytes = bytes(audio)
         mime = sniff_mime(wav_bytes)
+        ss.gpt_query = ""
+        ss.voice_inserted_once = False
         ss.voice_ready = True
         debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
     else:
