@@ -240,9 +240,11 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
             txt = " ".join(x.strip() for x in result if x).strip()
             if txt:
                 return txt
+            if txt:
+            return txt
     except Exception as e:
         st.session_state.debug_buf.append(f"[local asr] vosk error: {repr(e)}")
-    return ""fpath, beam_size=1)
+    return ""
         txt = " ".join(s.text.strip() for s in segments).strip()
         if txt:
             return txt
