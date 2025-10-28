@@ -1,13 +1,11 @@
 # Avatharam-2.2
-# Ver-7.1
-# Additions on top of Ver-6:
-# 1) Autoplay intro music (BenHur-Music.mp3) at app start; stop when avatar viewer is ready
-# 2) Auto-start the HeyGen streaming session on load (no need to press Start)
-# 3) Graceful stop on app shutdown (best-effort)
-# 4) Keep Start/Stop buttons for manual control
-# 5) No static image on first paint; only show the preview image after a manual Stop
-# 6) All debug logs go to Streamlit logs (stdout); removed the on-page Debug text area
-# 7) iPhone soundbar fix (WebM/OGG→WAV for display), local ASR, greeting, tribar, etc.
+# Ver-7.2
+# - Keep all features from Ver-7.1
+# - Center & color Speak/Stop (best-effort CSS)
+# - Rename/Test-1 -> Instruction (blue/white) with new sentence
+# - Rename/ChatGPT-1 -> ChatGPT (dark-purple/white)
+# - ChatGPT button acts as the submit trigger for the edit box (phone-friendly; no Ctrl+Enter)
+# - All logs to stdout (Streamlit logs)
 
 import atexit
 import json
@@ -32,6 +30,17 @@ st.markdown(
   iframe { border:none; border-radius:16px; }
   .rowbtn .stButton>button { height:40px; font-size:.95rem; border-radius:12px; }
   div.stChatInput textarea { min-height: 3.4em !important; max-height: 3.8em !important; }
+
+  /* Center mic component and style its two buttons (component renders two buttons in order) */
+  #micbox { display:flex; justify-content:center; }
+  #micbox .stButton > button { min-width:120px; border-radius:12px; margin:0 .35rem; }
+  /* Best-effort styling: first button = Speak (red/white), second = Stop (light-green/black) */
+  #micbox .stButton:nth-of-type(1) > button { background:#d32f2f; color:white; border:0; }
+  #micbox .stButton:nth-of-type(2) > button { background:#81c784; color:#111; border:0; }
+
+  /* Style action buttons via container IDs */
+  #instr .stButton > button { background:#1e90ff; color:white; border:0; }
+  #chatgpt .stButton > button { background:#4b0082; color:white; border:0; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -60,7 +69,7 @@ OPENAI_API_KEY = (
 if not HEYGEN_API_KEY:
     st.error("Missing HeyGen API key in .streamlit/secrets.toml")
     st.stop()
-# OPENAI_API_KEY is optional; only used for ChatGPT1 text, not ASR
+# OPENAI_API_KEY is optional; only used for ChatGPT text (not ASR)
 
 # ---------------- Endpoints ----------------
 BASE = "https://api.heygen.com/v1"
@@ -333,7 +342,6 @@ if ss.show_sidebar:
             debug("[stopped] session cleared")
 
 # ---------------- Background music (autoplay until avatar renders) ----------------
-# Removed key=... to avoid TypeError with your Streamlit build
 benhur_path = Path(__file__).parent / "BenHur-Music.mp3"
 if ss.bgm_should_play and benhur_path.exists():
     components.html(
@@ -344,7 +352,6 @@ if ss.bgm_should_play and benhur_path.exists():
         scrolling=False,
     )
 else:
-    # Render a silent no-op to replace/stop any previous audio element
     components.html("<div id='bgm_off'></div>", height=0, scrolling=False)
 
 # ---------------- Auto-start the avatar session (once) ----------------
@@ -391,14 +398,16 @@ if viewer_loaded and viewer_path.exists():
     )
     components.html(html, height=340, scrolling=False)
 else:
-    # Do NOT show static image on initial load; only show preview after a manual Stop
+    # Not showing static image on first paint
+
+    # If user stops the session manually (both None), we could show preview if desired:
     if ss.session_id is None and ss.session_token is None:
         _image_compat(
             FIXED_AVATAR["normal_preview"],
             caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
         )
 
-# ---------------- Mic recorder ----------------
+# ---------------- Mic recorder (centered with colored Speak/Stop) ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
@@ -408,32 +417,36 @@ except Exception:
 
 wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
-if _HAS_MIC:
-    audio = mic_recorder(
-        start_prompt="Speak",
-        stop_prompt="Stop",
-        just_once=True,
-        use_container_width=False,
-        key="mic_recorder_main",
-    )
-    if isinstance(audio, dict) and audio.get("bytes"):
-        wav_bytes = audio["bytes"]
-        mime = sniff_mime(wav_bytes)
-        ss.gpt_query = ""
-        ss.voice_inserted_once = False
-        ss.voice_ready = True
-        debug(f"[mic] received {len(wav_bytes)} bytes, mime={mime}")
-    elif isinstance(audio, (bytes, bytearray)) and audio:
-        wav_bytes = bytes(audio)
-        mime = sniff_mime(wav_bytes)
-        ss.gpt_query = ""
-        ss.voice_inserted_once = False
-        ss.voice_ready = True
-        debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
+
+with st.container():
+    st.markdown("<div id='micbox'>", unsafe_allow_html=True)
+    if _HAS_MIC:
+        audio = mic_recorder(
+            start_prompt="Speak",
+            stop_prompt="Stop",
+            just_once=True,
+            use_container_width=False,
+            key="mic_recorder_main",
+        )
+        if isinstance(audio, dict) and audio.get("bytes"):
+            wav_bytes = audio["bytes"]
+            mime = sniff_mime(wav_bytes)
+            ss.gpt_query = ""
+            ss.voice_inserted_once = False
+            ss.voice_ready = True
+            debug(f"[mic] received {len(wav_bytes)} bytes, mime={mime}")
+        elif isinstance(audio, (bytes, bytearray)) and audio:
+            wav_bytes = bytes(audio)
+            mime = sniff_mime(wav_bytes)
+            ss.gpt_query = ""
+            ss.voice_inserted_once = False
+            ss.voice_ready = True
+            debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
+        else:
+            debug("[mic] waiting for recording...")
     else:
-        debug("[mic] waiting for recording...")
-else:
-    st.warning("streamlit-mic-recorder is not installed.")
+        st.warning("streamlit-mic-recorder is not installed.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 if ss.voice_ready and wav_bytes:
     # 1) Transcribe first
@@ -456,16 +469,25 @@ if ss.voice_ready and wav_bytes:
 if ss.voice_ready and ss.voice_inserted_once:
     ss.voice_ready = False
 
-# ---------------- Actions row ----------------
+# ---------------- Actions row (styled) ----------------
 col1, col2 = st.columns(2, gap="small")
 with col1:
-    if st.button("Test-1", key="btn_test1_main", use_container_width=True):
+    st.markdown("<div id='instr'>", unsafe_allow_html=True)
+    if st.button("Instruction", key="btn_instruction_main", use_container_width=True):
         if not (ss.session_id and ss.session_token and ss.offer_sdp):
             st.warning("Start a session first.")
         else:
-            send_text_to_avatar(ss.session_id, ss.session_token, "Hello. Welcome to the test demonstration.")
+            send_text_to_avatar(
+                ss.session_id,
+                ss.session_token,
+                "To speak to me, press the record button, pause a second and then speak. Once you have spoken press the [Stop] button",
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ChatGPT button doubles as submit for the edit box
 with col2:
-    if st.button("ChatGPT1", key="btn_chatgpt1_main", use_container_width=True):
+    st.markdown("<div id='chatgpt'>", unsafe_allow_html=True)
+    if st.button("ChatGPT", key="btn_chatgpt_main", use_container_width=True):
         user_text = (ss.get("gpt_query") or "").strip()
         if not user_text:
             debug("[chatgpt] empty user text; skipping")
@@ -498,8 +520,10 @@ with col2:
             except Exception as e:
                 st.error("ChatGPT call failed. See Streamlit logs.")
                 debug(f"[openai error] {repr(e)}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- Edit box ----------------
+# No Ctrl+Enter needed: pressing the ChatGPT button reads the latest text from ss['gpt_query'].
 ss.gpt_query = st.text_area(
     "Edit message",
     value=ss.get("gpt_query", "Hello, welcome."),
