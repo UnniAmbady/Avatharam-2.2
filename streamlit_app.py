@@ -1,13 +1,13 @@
 # Avatharam-2.2
-# Ver-8
-# Cosmetic-only update from Ver-7.5.2:
-# - Button colors implemented using the 'horizontal block + nth-of-type' CSS pattern
-#   demonstrated in streamlit_app-Colours.py.
-#   * Top centered toggle (Speak/Stop): red / green
-#   * Instruction: blue
-#   * ChatGPT: orange (dark text)
-#
-# All other features and logic remain unchanged.
+# Ver-8.1  (#Color of buttons - fixed)
+# Cosmetic-only update over Ver-7.5.2:
+# - Removed redundant top Speak/Stop buttons
+# - Kept the real mic toggle centered
+# - Colors applied via the 'horizontal block + nth-of-type' CSS pattern (as in streamlit_app-Colours.py)
+#   * Speak (red) / Stop (green)
+#   * Instruction (blue)
+#   * ChatGPT (orange)
+# - No functional changes to any feature
 
 import atexit
 import json
@@ -24,10 +24,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Avatharam-2", layout="centered")
 st.text("by Krish Ambady")
 
-# ---------------- CSS (scoped like streamlit_app-Colours.py) ----------------
-# We color two separate horizontal blocks:
-# 1) #microw  -> two columns (Speak = red, Stop = green)
-# 2) #actrow  -> two columns (Instruction = blue, ChatGPT = orange)
+# ---------------- CSS (scoped like your Colours.py) ----------------
 st.markdown(
     """
 <style>
@@ -36,10 +33,11 @@ st.markdown(
   .rowbtn .stButton>button { height:40px; font-size:.95rem; border-radius:12px; }
   div.stChatInput textarea { min-height: 3.4em !important; max-height: 3.8em !important; }
 
-  /* ===== Mic recorder row colors (match Colours.py approach) ===== */
-  /* Target the two columns INSIDE #microw's immediate horizontal block */
+  /* ===== Mic recorder row (Speak/Stop) =====
+     Use the same technique as in streamlit_app-Colours.py:
+     target the immediate horizontal block under #microw, color its first two columns. */
   #microw div[data-testid="stHorizontalBlock"] > div:nth-of-type(1) button {
-      background-color: #e74c3c;  /* red (Speak) */
+      background-color: #e74c3c;  /* red = Speak */
       color: #ffffff;
       border-color: #e74c3c;
       border-radius: 12px;
@@ -47,7 +45,7 @@ st.markdown(
       font-weight: 600;
   }
   #microw div[data-testid="stHorizontalBlock"] > div:nth-of-type(2) button {
-      background-color: #27ae60;  /* green (Stop) */
+      background-color: #27ae60;  /* green = Stop */
       color: #ffffff;
       border-color: #27ae60;
       border-radius: 12px;
@@ -57,9 +55,9 @@ st.markdown(
   #microw div[data-testid="stHorizontalBlock"] > div button:hover { filter: brightness(0.95); }
   #microw div[data-testid="stHorizontalBlock"] > div button:active { transform: translateY(1px); }
 
-  /* ===== Actions row colors (Instruction / ChatGPT) ===== */
+  /* ===== Actions row (Instruction / ChatGPT) ===== */
   #actrow div[data-testid="stHorizontalBlock"] > div:nth-of-type(1) button {
-      background-color: #2980b9;  /* blue (Instruction) */
+      background-color: #2980b9;  /* blue = Instruction */
       color: #ffffff;
       border-color: #2980b9;
       border-radius: 12px;
@@ -67,7 +65,7 @@ st.markdown(
       font-weight: 600;
   }
   #actrow div[data-testid="stHorizontalBlock"] > div:nth-of-type(2) button {
-      background-color: #f39c12;  /* orange (ChatGPT) */
+      background-color: #f39c12;  /* orange = ChatGPT */
       color: #000000;
       border-color: #f39c12;
       border-radius: 12px;
@@ -104,7 +102,6 @@ OPENAI_API_KEY = (
 if not HEYGEN_API_KEY:
     st.error("Missing HeyGen API key in .streamlit/secrets.toml")
     st.stop()
-# OPENAI_API_KEY is optional; only used for ChatGPT text (not ASR)
 
 # ---------------- Endpoints ----------------
 BASE = "https://api.heygen.com/v1"
@@ -118,7 +115,6 @@ HEADERS_XAPI = {
     "x-api-key": HEYGEN_API_KEY,
     "Content-Type": "application/json",
 }
-
 def _headers_bearer(tok: str):
     return {
         "accept": "application/json",
@@ -133,41 +129,38 @@ ss.setdefault("session_token", None)
 ss.setdefault("offer_sdp", None)
 ss.setdefault("rtc_config", None)
 ss.setdefault("show_sidebar", False)
-ss.setdefault("gpt_query", "Hello, welcome.")  # initial greeting
+ss.setdefault("gpt_query", "Hello, welcome.")
 ss.setdefault("voice_ready", False)
 ss.setdefault("voice_inserted_once", False)
-ss.setdefault("bgm_should_play", True)   # play intro music on load
-ss.setdefault("auto_started", False)     # ensure we auto-start only once per session
+ss.setdefault("bgm_should_play", True)
+ss.setdefault("auto_started", False)
 
-# ---------------- Debug: log to stdout only ----------------
+# ---------------- Debug ----------------
 def debug(msg: str):
-    ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 # ---------------- HTTP helpers ----------------
 def _post_xapi(url, payload=None):
     r = requests.post(url, headers=HEADERS_XAPI, data=json.dumps(payload or {}), timeout=60)
-    raw = r.text
     try:
         body = r.json()
     except Exception:
-        body = {"_raw": raw}
+        body = {"_raw": r.text}
     debug(f"[POST x-api] {url} -> {r.status_code}")
     if r.status_code >= 400:
-        debug(raw)
+        debug(r.text)
         r.raise_for_status()
     return r.status_code, body
 
 def _post_bearer(url, token, payload=None):
     r = requests.post(url, headers=_headers_bearer(token), data=json.dumps(payload or {}), timeout=60)
-    raw = r.text
     try:
         body = r.json()
     except Exception:
-        body = {"_raw": raw}
+        body = {"_raw": r.text}
     debug(f"[POST bearer] {url} -> {r.status_code}")
     if r.status_code >= 400:
-        debug(raw)
+        debug(r.text)
         r.raise_for_status()
     return r.status_code, body
 
@@ -221,7 +214,6 @@ def stop_session(session_id: Optional[str], session_token: Optional[str]):
     except Exception as e:
         debug(f"[stop_session] {e}")
 
-# Best-effort graceful stop on shutdown
 @atexit.register
 def _graceful_shutdown():
     try:
@@ -232,9 +224,8 @@ def _graceful_shutdown():
     except Exception:
         pass
 
-# ---------------- Audio helpers (sniffer + conversion for soundbar) ----------------
+# ---------------- Audio helpers ----------------
 def sniff_mime(b: bytes) -> str:
-    """Sniff common audio containers via magic bytes; return MIME for st.audio."""
     try:
         if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
             return "audio/wav"
@@ -251,7 +242,6 @@ def sniff_mime(b: bytes) -> str:
     return "audio/wav"
 
 def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) -> tuple[Optional[bytes], bool]:
-    # presence check
     try:
         _ = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -295,7 +285,6 @@ def _save_bytes_tmp(b: bytes, suffix: str) -> str:
 def transcribe_local(audio_bytes: bytes, mime: str) -> str:
     ext = ".wav" if "wav" in mime else ".mp3" if "mp3" in mime else ".webm" if "webm" in mime else ".ogg" if "ogg" in mime else ".m4a"
     fpath = _save_bytes_tmp(audio_bytes, ext)
-    # faster-whisper
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="auto", compute_type="int8")
@@ -305,7 +294,6 @@ def transcribe_local(audio_bytes: bytes, mime: str) -> str:
             return txt
     except Exception as e:
         debug(f"[local asr] faster-whisper error: {repr(e)}")
-    # Vosk fallback
     try:
         import json as _json
         from vosk import Model, KaldiRecognizer
@@ -361,7 +349,7 @@ if ss.show_sidebar:
             time.sleep(1.0)
             ss.session_id, ss.session_token = sid, tok
             ss.offer_sdp, ss.rtc_config = offer_sdp, rtc_config
-            ss.bgm_should_play = True  # let BGM play until viewer renders, then it will stop
+            ss.bgm_should_play = True
             debug(f"[ready] session_id={sid[:8]}...")
         if st.button("Stop", key="btn_stop_sidebar"):
             stop_session(ss.session_id, ss.session_token)
@@ -369,23 +357,17 @@ if ss.show_sidebar:
             ss.session_token = None
             ss.offer_sdp = None
             ss.rtc_config = None
-            ss.bgm_should_play = False  # don't resume BGM automatically on manual stop
+            ss.bgm_should_play = False
             debug("[stopped] session cleared")
 
-# ---------------- Background music (autoplay until avatar renders) ----------------
+# ---------------- Background music ----------------
 benhur_path = Path(__file__).parent / "BenHur-Music.mp3"
 if ss.bgm_should_play and benhur_path.exists():
-    components.html(
-        """
-        <audio id='bgm' src='BenHur-Music.mp3' autoplay loop></audio>
-        """,
-        height=0,
-        scrolling=False,
-    )
+    components.html("<audio id='bgm' src='BenHur-Music.mp3' autoplay loop></audio>", height=0, scrolling=False)
 else:
     components.html("<div id='bgm_off'></div>", height=0, scrolling=False)
 
-# ---------------- Auto-start the avatar session (once) ----------------
+# ---------------- Auto-start the avatar session ----------------
 if not ss.auto_started:
     try:
         debug("[auto-start] initializing session")
@@ -404,7 +386,6 @@ if not ss.auto_started:
 viewer_path = Path(__file__).parent / "viewer.html"
 viewer_loaded = ss.session_id and ss.session_token and ss.offer_sdp
 
-# If the viewer is loaded, stop the BGM (it will cease on the next render)
 if viewer_loaded and ss.bgm_should_play:
     ss.bgm_should_play = False
     debug("[bgm] stopping background music (viewer ready)")
@@ -429,56 +410,35 @@ if viewer_loaded and viewer_path.exists():
     )
     components.html(html, height=340, scrolling=False)
 else:
-    # Not showing static image on first paint
     if ss.session_id is None and ss.session_token is None:
-        _image_compat(
-            FIXED_AVATAR["normal_preview"],
-            caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
-        )
+        _image_compat(FIXED_AVATAR["normal_preview"], caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})")
 
-# ---------------- Mic recorder (centered; styled via #microw CSS) ----------------
+# ---------------- Mic recorder (centered; colored via #microw CSS) ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
 except Exception:
-    mic_recorder = None  # type: ignore
+    mic_recorder = None
     _HAS_MIC = False
 
 wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
 
 with st.container():
-    # outer layout to keep mic centered
-    center_cols = st.columns([1, 2, 1])
+    center_cols = st.columns([1, 2, 1])  # keep centered
     with center_cols[1]:
-        # inner horizontal block that will be color-styled by CSS using nth-of-type
+        # The recorder renders its own two buttons; we wrap this area so the CSS can
+        # target the immediate horizontal block inside.
         st.markdown('<div id="microw">', unsafe_allow_html=True)
-        # two columns = Speak / Stop (order matters for CSS nth-of-type)
-        mc1, mc2 = st.columns(2)
-        with mc1:
-            if _HAS_MIC:
-                _ = st.button("Speak", key="btn_speak_dummy", use_container_width=True)
-            else:
-                _ = st.button("Speak", key="btn_speak_dummy_na", use_container_width=True)
-        with mc2:
-            if _HAS_MIC:
-                _ = st.button("Stop", key="btn_stop_dummy", use_container_width=True)
-            else:
-                _ = st.button("Stop", key="btn_stop_dummy_na", use_container_width=True)
-        # real recorder widget (kept just below; colors live on the row above)
-        if _HAS_MIC:
-            audio = mic_recorder(
-                start_prompt="Speak",
-                stop_prompt="Stop",
-                just_once=True,
-                use_container_width=False,
-                key="mic_recorder_main",
-            )
-        else:
-            audio = None
+        audio = mic_recorder(
+            start_prompt="Speak",
+            stop_prompt="Stop",
+            just_once=True,
+            use_container_width=True,
+            key="mic_recorder_main",
+        ) if _HAS_MIC else None
         st.markdown("</div>", unsafe_allow_html=True)
 
-# same handling as previous versions
 if _HAS_MIC:
     if isinstance(audio, dict) and audio.get("bytes"):
         wav_bytes = audio["bytes"]
