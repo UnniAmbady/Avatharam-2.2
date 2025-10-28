@@ -179,7 +179,7 @@ def create_session_token(session_id: str) -> str:
     return tok
 
 def send_text_to_avatar(session_id: str, session_token: str, text: str):
-    debug(f"[avatar] speak {len(text)} chars}")
+    debug(f"[avatar] speak {len(text)} chars")
     _post_bearer(
         API_STREAM_TASK,
         session_token,
