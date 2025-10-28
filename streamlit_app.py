@@ -1,5 +1,5 @@
-# Avatharam-2.2
-# Ver-7.5
+k# Avatharam-2.2
+# Ver-7.5.2
 # SAME FEATURES as Ver-7.4. Only change: buttons are styled via CSS (no style= kwarg),
 # with robust, scoped selectors for:
 # 1) Speak/Stop (centered; red/green)
@@ -490,7 +490,7 @@ with col1:
             send_text_to_avatar(
                 ss.session_id,
                 ss.session_token,
-                "To speak to me, press the record button, pause a second and then speak. Once you have spoken press the [Stop] button",
+                "To speak to me, press the speak button, pause a second and then speak. Once you have spoken press the [Stop] button",
             )
     st.markdown("</div>", unsafe_allow_html=True)
 
