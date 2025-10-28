@@ -1,4 +1,4 @@
-k# Avatharam-2.2
+# Avatharam-2.2
 # Ver-7.5.2
 # SAME FEATURES as Ver-7.4. Only change: buttons are styled via CSS (no style= kwarg),
 # with robust, scoped selectors for:
