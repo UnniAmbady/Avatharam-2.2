@@ -1,8 +1,10 @@
 # Avatharam-2.2
-# Ver-7.4
-# SAME AS Ver-7.2, with only one modification:
-# -> Speak/Stop mic recorder is now hard-centered using a 3-column layout (middle column)
-# All other features and code remain unchanged.
+# Ver-7.5
+# SAME FEATURES as Ver-7.4. Only change: buttons are styled via CSS (no style= kwarg),
+# with robust, scoped selectors for:
+# 1) Speak/Stop (centered; red/green)
+# 2) Instruction (blue)
+# 3) ChatGPT (dark-purple)
 
 import atexit
 import json
@@ -20,6 +22,8 @@ st.set_page_config(page_title="Avatharam-2", layout="centered")
 st.text("by Krish Ambady")
 
 # ---------------- CSS ----------------
+# NOTE: We do NOT use any st.button(style=...) — Streamlit does not support a 'style' kwarg.
+# We color/align buttons via scoped CSS, targeting containers we control (#micbox, #instr, #chatgpt).
 st.markdown(
     """
 <style>
@@ -28,16 +32,29 @@ st.markdown(
   .rowbtn .stButton>button { height:40px; font-size:.95rem; border-radius:12px; }
   div.stChatInput textarea { min-height: 3.4em !important; max-height: 3.8em !important; }
 
-  /* Center mic component and style its two buttons (component renders two buttons in order) */
-  #micbox { display:flex; justify-content:center; }
-  #micbox .stButton > button { min-width:120px; border-radius:12px; margin:0 .35rem; }
-  /* Best-effort styling: first button = Speak (red/white), second = Stop (light-green/black) */
-  #micbox .stButton:nth-of-type(1) > button { background:#d32f2f; color:white; border:0; }
-  #micbox .stButton:nth-of-type(2) > button { background:#81c784; color:#111; border:0; }
+  /* ====== Mic recorder (Speak / Stop) ====== */
+  /* We wrap the mic in #micbox and center it with a middle column layout. */
+  #micbox { display:flex; justify-content:center; align-items:center; gap:.6rem; }
+  #micbox .stButton > button {
+      min-width:120px; height:44px; border-radius:12px; border:0;
+      font-weight:600;
+  }
+  /* First mic button = Speak (red/white) */
+  #micbox .stButton:nth-of-type(1) > button { background:#d32f2f; color:#fff; }
+  /* Second mic button = Stop (light green / dark text) */
+  #micbox .stButton:nth-of-type(2) > button { background:#81c784; color:#111; }
 
-  /* Style action buttons via container IDs */
-  #instr .stButton > button { background:#1e90ff; color:white; border:0; }
-  #chatgpt .stButton > button { background:#4b0082; color:white; border:0; }
+  /* ====== Action buttons ====== */
+  /* Instruction (blue/white) */
+  #instr .stButton > button {
+      background:#1e90ff; color:#fff; border:0; height:48px;
+      border-radius:12px; font-weight:600;
+  }
+  /* ChatGPT (dark-purple/white) */
+  #chatgpt .stButton > button {
+      background:#4b0082; color:#fff; border:0; height:48px;
+      border-radius:12px; font-weight:600;
+  }
 </style>
 """,
     unsafe_allow_html=True,
@@ -104,11 +121,7 @@ ss.setdefault("auto_started", False)     # ensure we auto-start only once per se
 # ---------------- Debug: log to stdout only ----------------
 def debug(msg: str):
     ts = time.strftime("%H:%M:%S")
-    line = f"[{ts}] {msg}"
-    try:
-        print(line, flush=True)
-    except Exception:
-        pass
+    print(f"[{ts}] {msg}", flush=True)
 
 # ---------------- HTTP helpers ----------------
 def _post_xapi(url, payload=None):
@@ -166,7 +179,7 @@ def create_session_token(session_id: str) -> str:
     return tok
 
 def send_text_to_avatar(session_id: str, session_token: str, text: str):
-    debug(f"[avatar] speak {len(text)} chars")
+    debug(f"[avatar] speak {len(text)} chars}")
     _post_bearer(
         API_STREAM_TASK,
         session_token,
@@ -240,13 +253,13 @@ def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) 
 
 def prepare_for_soundbar(audio_bytes: bytes, mime: str) -> tuple[bytes, str]:
     if mime in ("audio/webm", "audio/ogg"):
-        out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", "-ac", "1"])
+        out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", " -ac", "1"])
         debug(f"[soundbar] convert={ok}, final_mime={'audio/wav' if ok else mime}")
         if ok and out:
             return out, "audio/wav"
         return audio_bytes, mime
     if mime == "audio/mp4":
-        debug("[soundbar] pass mp4]")
+        debug("[soundbar] pass mp4")
         return audio_bytes, "audio/mp4"
     debug(f"[soundbar] pass-through mime={mime}")
     return audio_bytes, mime
@@ -402,7 +415,7 @@ else:
             caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
         )
 
-# ---------------- Mic recorder (HARD-CENTERED) ----------------
+# ---------------- Mic recorder (centered) ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
@@ -413,9 +426,8 @@ except Exception:
 wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
 
-# ---- ONLY MODIFIED BLOCK: center Speak/Stop by placing mic inside middle column ----
 with st.container():
-    center_cols = st.columns([1, 2, 1])   # <<<<<<<<<<  CHANGE: ensures true centering
+    center_cols = st.columns([1, 2, 1])  # hard center
     with center_cols[1]:
         st.markdown("<div id='micbox'>", unsafe_allow_html=True)
         if _HAS_MIC:
@@ -467,7 +479,7 @@ if ss.voice_ready and wav_bytes:
 if ss.voice_ready and ss.voice_inserted_once:
     ss.voice_ready = False
 
-# ---------------- Actions row (styled) ----------------
+# ---------------- Actions row (Instruction + ChatGPT) ----------------
 col1, col2 = st.columns(2, gap="small")
 with col1:
     st.markdown("<div id='instr'>", unsafe_allow_html=True)
@@ -482,7 +494,6 @@ with col1:
             )
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ChatGPT button doubles as submit for the edit box
 with col2:
     st.markdown("<div id='chatgpt'>", unsafe_allow_html=True)
     if st.button("ChatGPT", key="btn_chatgpt_main", use_container_width=True):
@@ -521,7 +532,7 @@ with col2:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- Edit box ----------------
-# No Ctrl+Enter needed: pressing the ChatGPT button reads the latest text from ss['gpt_query'].
+# Pressing the ChatGPT button submits the latest text (no Ctrl+Enter needed).
 ss.gpt_query = st.text_area(
     "Edit message",
     value=ss.get("gpt_query", "Hello, welcome."),
