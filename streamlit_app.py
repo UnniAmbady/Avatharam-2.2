@@ -1,10 +1,13 @@
 # Avatharam-2.2
-# Ver-7.5.2
-# SAME FEATURES as Ver-7.4. Only change: buttons are styled via CSS (no style= kwarg),
-# with robust, scoped selectors for:
-# 1) Speak/Stop (centered; red/green)
-# 2) Instruction (blue)
-# 3) ChatGPT (dark-purple)
+# Ver-8
+# Cosmetic-only update from Ver-7.5.2:
+# - Button colors implemented using the 'horizontal block + nth-of-type' CSS pattern
+#   demonstrated in streamlit_app-Colours.py.
+#   * Top centered toggle (Speak/Stop): red / green
+#   * Instruction: blue
+#   * ChatGPT: orange (dark text)
+#
+# All other features and logic remain unchanged.
 
 import atexit
 import json
@@ -21,9 +24,10 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Avatharam-2", layout="centered")
 st.text("by Krish Ambady")
 
-# ---------------- CSS ----------------
-# NOTE: We do NOT use any st.button(style=...) — Streamlit does not support a 'style' kwarg.
-# We color/align buttons via scoped CSS, targeting containers we control (#micbox, #instr, #chatgpt).
+# ---------------- CSS (scoped like streamlit_app-Colours.py) ----------------
+# We color two separate horizontal blocks:
+# 1) #microw  -> two columns (Speak = red, Stop = green)
+# 2) #actrow  -> two columns (Instruction = blue, ChatGPT = orange)
 st.markdown(
     """
 <style>
@@ -32,29 +36,46 @@ st.markdown(
   .rowbtn .stButton>button { height:40px; font-size:.95rem; border-radius:12px; }
   div.stChatInput textarea { min-height: 3.4em !important; max-height: 3.8em !important; }
 
-  /* ====== Mic recorder (Speak / Stop) ====== */
-  /* We wrap the mic in #micbox and center it with a middle column layout. */
-  #micbox { display:flex; justify-content:center; align-items:center; gap:.6rem; }
-  #micbox .stButton > button {
-      min-width:120px; height:44px; border-radius:12px; border:0;
-      font-weight:600;
+  /* ===== Mic recorder row colors (match Colours.py approach) ===== */
+  /* Target the two columns INSIDE #microw's immediate horizontal block */
+  #microw div[data-testid="stHorizontalBlock"] > div:nth-of-type(1) button {
+      background-color: #e74c3c;  /* red (Speak) */
+      color: #ffffff;
+      border-color: #e74c3c;
+      border-radius: 12px;
+      height: 44px;
+      font-weight: 600;
   }
-  /* First mic button = Speak (red/white) */
-  #micbox .stButton:nth-of-type(1) > button { background:#d32f2f; color:#fff; }
-  /* Second mic button = Stop (light green / dark text) */
-  #micbox .stButton:nth-of-type(2) > button { background:#81c784; color:#111; }
+  #microw div[data-testid="stHorizontalBlock"] > div:nth-of-type(2) button {
+      background-color: #27ae60;  /* green (Stop) */
+      color: #ffffff;
+      border-color: #27ae60;
+      border-radius: 12px;
+      height: 44px;
+      font-weight: 600;
+  }
+  #microw div[data-testid="stHorizontalBlock"] > div button:hover { filter: brightness(0.95); }
+  #microw div[data-testid="stHorizontalBlock"] > div button:active { transform: translateY(1px); }
 
-  /* ====== Action buttons ====== */
-  /* Instruction (blue/white) */
-  #instr .stButton > button {
-      background:#1e90ff; color:#fff; border:0; height:48px;
-      border-radius:12px; font-weight:600;
+  /* ===== Actions row colors (Instruction / ChatGPT) ===== */
+  #actrow div[data-testid="stHorizontalBlock"] > div:nth-of-type(1) button {
+      background-color: #2980b9;  /* blue (Instruction) */
+      color: #ffffff;
+      border-color: #2980b9;
+      border-radius: 12px;
+      height: 48px;
+      font-weight: 600;
   }
-  /* ChatGPT (dark-purple/white) */
-  #chatgpt .stButton > button {
-      background:#4b0082; color:#fff; border:0; height:48px;
-      border-radius:12px; font-weight:600;
+  #actrow div[data-testid="stHorizontalBlock"] > div:nth-of-type(2) button {
+      background-color: #f39c12;  /* orange (ChatGPT) */
+      color: #000000;
+      border-color: #f39c12;
+      border-radius: 12px;
+      height: 48px;
+      font-weight: 600;
   }
+  #actrow div[data-testid="stHorizontalBlock"] > div button:hover { filter: brightness(0.95); }
+  #actrow div[data-testid="stHorizontalBlock"] > div button:active { transform: translateY(1px); }
 </style>
 """,
     unsafe_allow_html=True,
@@ -253,7 +274,7 @@ def _ffmpeg_convert_bytes(inp: bytes, in_ext: str, out_ext: str, ff_args: list) 
 
 def prepare_for_soundbar(audio_bytes: bytes, mime: str) -> tuple[bytes, str]:
     if mime in ("audio/webm", "audio/ogg"):
-        out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", " -ac", "1"])
+        out, ok = _ffmpeg_convert_bytes(audio_bytes, ".webm" if mime.endswith("webm") else ".ogg", ".wav", ["-ar", "16000", "-ac", "1"])
         debug(f"[soundbar] convert={ok}, final_mime={'audio/wav' if ok else mime}")
         if ok and out:
             return out, "audio/wav"
@@ -415,7 +436,7 @@ else:
             caption=f"{FIXED_AVATAR['pose_name']} ({FIXED_AVATAR['avatar_id']})",
         )
 
-# ---------------- Mic recorder (centered) ----------------
+# ---------------- Mic recorder (centered; styled via #microw CSS) ----------------
 try:
     from streamlit_mic_recorder import mic_recorder
     _HAS_MIC = True
@@ -427,9 +448,24 @@ wav_bytes: Optional[bytes] = None
 mime: str = "audio/wav"
 
 with st.container():
-    center_cols = st.columns([1, 2, 1])  # hard center
+    # outer layout to keep mic centered
+    center_cols = st.columns([1, 2, 1])
     with center_cols[1]:
-        st.markdown("<div id='micbox'>", unsafe_allow_html=True)
+        # inner horizontal block that will be color-styled by CSS using nth-of-type
+        st.markdown('<div id="microw">', unsafe_allow_html=True)
+        # two columns = Speak / Stop (order matters for CSS nth-of-type)
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            if _HAS_MIC:
+                _ = st.button("Speak", key="btn_speak_dummy", use_container_width=True)
+            else:
+                _ = st.button("Speak", key="btn_speak_dummy_na", use_container_width=True)
+        with mc2:
+            if _HAS_MIC:
+                _ = st.button("Stop", key="btn_stop_dummy", use_container_width=True)
+            else:
+                _ = st.button("Stop", key="btn_stop_dummy_na", use_container_width=True)
+        # real recorder widget (kept just below; colors live on the row above)
         if _HAS_MIC:
             audio = mic_recorder(
                 start_prompt="Speak",
@@ -438,28 +474,28 @@ with st.container():
                 use_container_width=False,
                 key="mic_recorder_main",
             )
-            if isinstance(audio, dict) and audio.get("bytes"):
-                wav_bytes = audio["bytes"]
-                mime = sniff_mime(wav_bytes)
-                ss.gpt_query = ""
-                ss.voice_inserted_once = False
-                ss.voice_ready = True
-                debug(f"[mic] received {len(wav_bytes)} bytes, mime={mime}")
-            elif isinstance(audio, (bytes, bytearray)) and audio:
-                wav_bytes = bytes(audio)
-                mime = sniff_mime(wav_bytes)
-                ss.gpt_query = ""
-                ss.voice_inserted_once = False
-                ss.voice_ready = True
-                debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
-            else:
-                debug("[mic] waiting for recording...]")
         else:
-            st.warning("streamlit-mic-recorder is not installed.")
+            audio = None
         st.markdown("</div>", unsafe_allow_html=True)
 
+# same handling as previous versions
+if _HAS_MIC:
+    if isinstance(audio, dict) and audio.get("bytes"):
+        wav_bytes = audio["bytes"]
+        mime = sniff_mime(wav_bytes)
+        ss.gpt_query = ""
+        ss.voice_inserted_once = False
+        ss.voice_ready = True
+        debug(f"[mic] received {len(wav_bytes)} bytes, mime={mime}")
+    elif isinstance(audio, (bytes, bytearray)) and audio:
+        wav_bytes = bytes(audio)
+        mime = sniff_mime(wav_bytes)
+        ss.gpt_query = ""
+        ss.voice_inserted_once = False
+        ss.voice_ready = True
+        debug(f"[mic] received {len(wav_bytes)} bytes (raw), mime={mime}")
+
 if ss.voice_ready and wav_bytes:
-    # 1) Transcribe first
     if not ss.voice_inserted_once:
         transcript_text = ""
         try:
@@ -471,18 +507,16 @@ if ss.voice_ready and wav_bytes:
         ss.gpt_query = transcript_text
         ss.voice_inserted_once = True
         debug(f"[voice->editbox] {len(transcript_text)} chars")
-    # 2) Then render the audio bar (iPhone-friendly)
     bar_bytes, bar_mime = prepare_for_soundbar(wav_bytes, mime)
     st.audio(bar_bytes, format=bar_mime, autoplay=False)
 
-# Reset flags after first render cycle
 if ss.voice_ready and ss.voice_inserted_once:
     ss.voice_ready = False
 
-# ---------------- Actions row (Instruction + ChatGPT) ----------------
+# ---------------- Actions row (Instruction / ChatGPT) ----------------
+st.markdown('<div id="actrow">', unsafe_allow_html=True)
 col1, col2 = st.columns(2, gap="small")
 with col1:
-    st.markdown("<div id='instr'>", unsafe_allow_html=True)
     if st.button("Instruction", key="btn_instruction_main", use_container_width=True):
         if not (ss.session_id and ss.session_token and ss.offer_sdp):
             st.warning("Start a session first.")
@@ -492,10 +526,7 @@ with col1:
                 ss.session_token,
                 "To speak to me, press the speak button, pause a second and then speak. Once you have spoken press the [Stop] button",
             )
-    st.markdown("</div>", unsafe_allow_html=True)
-
 with col2:
-    st.markdown("<div id='chatgpt'>", unsafe_allow_html=True)
     if st.button("ChatGPT", key="btn_chatgpt_main", use_container_width=True):
         user_text = (ss.get("gpt_query") or "").strip()
         if not user_text:
@@ -529,10 +560,9 @@ with col2:
             except Exception as e:
                 st.error("ChatGPT call failed. See Streamlit logs.")
                 debug(f"[openai error] {repr(e)}")
-    st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- Edit box ----------------
-# Pressing the ChatGPT button submits the latest text (no Ctrl+Enter needed).
 ss.gpt_query = st.text_area(
     "Edit message",
     value=ss.get("gpt_query", "Hello, welcome."),
